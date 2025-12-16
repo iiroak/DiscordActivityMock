@@ -1,0 +1,11 @@
+﻿  Determinando los proyectos que se van a restaurar...
+  Se ha restaurado C:\Users\Kaori\Desktop\DiscordActivityMockV2\DiscordActivityMockV2.csproj (en 195 ms).
+C:\Users\Kaori\.nuget\packages\microsoft.windowsappsdk.winui\1.8.251105000\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets(594,9): error MSB3073: El comando ""C:\Users\Kaori\.nuget\packages\microsoft.windowsappsdk.winui\1.8.251105000\buildTransitive\..\tools\net6.0\..\net472\XamlCompiler.exe" "obj\x64\Debug\net8.0-windows10.0.19041.0\win-x64\\input.json" "obj\x64\Debug\net8.0-windows10.0.19041.0\win-x64\\output.json"" sali├│ con el c├│digo 1. [C:\Users\Kaori\Desktop\DiscordActivityMockV2\DiscordActivityMockV2.csproj]
+
+ERROR al compilar.
+
+C:\Users\Kaori\.nuget\packages\microsoft.windowsappsdk.winui\1.8.251105000\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets(594,9): error MSB3073: El comando ""C:\Users\Kaori\.nuget\packages\microsoft.windowsappsdk.winui\1.8.251105000\buildTransitive\..\tools\net6.0\..\net472\XamlCompiler.exe" "obj\x64\Debug\net8.0-windows10.0.19041.0\win-x64\\input.json" "obj\x64\Debug\net8.0-windows10.0.19041.0\win-x64\\output.json"" sali├│ con el c├│digo 1. [C:\Users\Kaori\Desktop\DiscordActivityMockV2\DiscordActivityMockV2.csproj]
+    0 Advertencia(s)
+    1 Errores
+
+Tiempo transcurrido 00:00:02.78
