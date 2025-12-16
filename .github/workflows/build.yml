@@ -47,7 +47,7 @@ jobs:
       
     - name: Build and Publish
       run: |
-        msbuild DiscordActivityMockV2.csproj /t:Publish /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishDir=publish/${{ matrix.rid }}/
+        msbuild DiscordActivityMockV2.csproj /t:Publish /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true /p:PublishDir=publish/${{ matrix.rid }}/
       
     - name: Upload artifact
       uses: actions/upload-artifact@v4
