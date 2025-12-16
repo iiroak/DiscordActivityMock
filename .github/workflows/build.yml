@@ -22,7 +22,13 @@ jobs:
     
     strategy:
       matrix:
-        platform: [x64, x86, arm64]
+        include:
+          - platform: x64
+            rid: win-x64
+          - platform: x86
+            rid: win-x86
+          - platform: ARM64
+            rid: win-arm64
     
     steps:
     - name: Checkout
@@ -37,16 +43,17 @@ jobs:
       uses: microsoft/setup-msbuild@v2
       
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore DiscordActivityMockV2.csproj
       
-    - name: Build
-      run: dotnet publish -c Release -r win-${{ matrix.platform }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/${{ matrix.platform }}
+    - name: Build and Publish
+      run: |
+        msbuild DiscordActivityMockV2.csproj /t:Publish /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishDir=publish/${{ matrix.rid }}/
       
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: DiscordActivityMock-win-${{ matrix.platform }}
-        path: publish/${{ matrix.platform }}/
+        name: DiscordActivityMock-${{ matrix.rid }}
+        path: publish/${{ matrix.rid }}/
         
   release:
     needs: build
@@ -58,26 +65,26 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: DiscordActivityMock-win-x64
-        path: artifacts/x64
+        path: artifacts/win-x64
         
     - name: Download x86 artifact
       uses: actions/download-artifact@v4
       with:
         name: DiscordActivityMock-win-x86
-        path: artifacts/x86
+        path: artifacts/win-x86
         
     - name: Download arm64 artifact
       uses: actions/download-artifact@v4
       with:
         name: DiscordActivityMock-win-arm64
-        path: artifacts/arm64
+        path: artifacts/win-arm64
         
     - name: Create ZIP files
       run: |
         cd artifacts
-        zip -r ../DiscordActivityMock-win-x64.zip x64/
-        zip -r ../DiscordActivityMock-win-x86.zip x86/
-        zip -r ../DiscordActivityMock-win-arm64.zip arm64/
+        zip -r ../DiscordActivityMock-win-x64.zip win-x64/
+        zip -r ../DiscordActivityMock-win-x86.zip win-x86/
+        zip -r ../DiscordActivityMock-win-arm64.zip win-arm64/
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
