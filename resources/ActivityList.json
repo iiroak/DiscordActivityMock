@@ -1,5 +1,10 @@
 [
     {
+        "name": "Arc Raiders",
+        "folder": "Arc Raiders",
+        "exe": "PioneerGame"
+    },
+    {
         "name": "Genshin Impact",
         "folder": "Genshin Impact game",
         "exe": "GenshinImpact.exe"
