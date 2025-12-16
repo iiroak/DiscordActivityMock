@@ -91,6 +91,9 @@ namespace DiscordActivityMockV2
         {
             InitializeComponent();
             
+            // Detect system language
+            Localization.DetectLanguage();
+            
             // Load saved settings
             LoadSettings();
             
@@ -118,8 +121,45 @@ namespace DiscordActivityMockV2
             
             // Apply loaded settings to UI
             ApplyLoadedSettings();
+            
+            // Apply localization to UI
+            ApplyLocalization();
+            
+            // Check for updates on startup
+            _ = CheckForUpdatesAsync();
         }
-                private void SetupCustomTitleBar()
+        
+        private async Task CheckForUpdatesAsync()
+        {
+            try
+            {
+                var (hasUpdate, newVersion, downloadUrl, releaseUrl) = await UpdateChecker.CheckForUpdateAsync();
+                
+                if (hasUpdate && newVersion != null && releaseUrl != null)
+                {
+                    var dialog = new ContentDialog
+                    {
+                        Title = Localization.Get("UpdateAvailable"),
+                        Content = Localization.Get("UpdateMessage", newVersion),
+                        PrimaryButtonText = Localization.Get("Download"),
+                        CloseButtonText = Localization.Get("Later"),
+                        DefaultButton = ContentDialogButton.Primary,
+                        XamlRoot = this.Content.XamlRoot,
+                        RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                    };
+                    
+                    var result = await dialog.ShowAsync();
+                    
+                    if (result == ContentDialogResult.Primary)
+                    {
+                        UpdateChecker.OpenReleasePage(releaseUrl);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SetupCustomTitleBar()
         {
             // Extend content into titlebar and hide the default caption buttons
             ExtendsContentIntoTitleBar = true;
@@ -137,6 +177,37 @@ namespace DiscordActivityMockV2
                     presenter.SetBorderAndTitleBar(true, false);
                 }
             }
+        }
+
+        private void ApplyLocalization()
+        {
+            // Step titles
+            Step1TitleText.Text = Localization.Get("Step1Title");
+            Step2TitleText.Text = Localization.Get("Step2Title");
+            Step3TitleText.Text = Localization.Get("Step3Title");
+            
+            // Buttons
+            CopyFromSystemText.Text = Localization.Get("CopyFromSystem");
+            DownloadBackupText.Text = Localization.Get("DownloadBackup");
+            StartBtnText.Text = Localization.Get("Start");
+            StopBtnText.Text = Localization.Get("Stop");
+            
+            // Search placeholder
+            ActivitySearchBox.PlaceholderText = Localization.Get("Search");
+            
+            // Status bar
+            WordPadStatusBar.Title = Localization.Get("Status");
+            WordPadStatusBar.Message = Localization.Get("SelectOptionAbove");
+            
+            // Footer
+            GitHubBtnText.Text = Localization.Get("GitHub");
+            DiscordBtnText.Text = Localization.Get("Discord");
+            AboutBtnText.Text = Localization.Get("About");
+            MadeWithText.Text = Localization.Get("MadeWith");
+            ByText.Text = Localization.Get("By");
+            
+            // Tooltips
+            InfoBtn.SetValue(ToolTipService.ToolTipProperty, Localization.Get("About"));
         }
 
         private void Window_Closed(object sender, WindowEventArgs args)
@@ -448,7 +519,8 @@ namespace DiscordActivityMockV2
                 Title = title,
                 Content = message,
                 CloseButtonText = "OK",
-                XamlRoot = this.Content.XamlRoot
+                XamlRoot = this.Content.XamlRoot,
+                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
             await dialog.ShowAsync();
         }
@@ -457,7 +529,7 @@ namespace DiscordActivityMockV2
         {
             var dontShowCheckBox = new CheckBox
             {
-                Content = "Don't show this again"
+                Content = Localization.Get("DontShowAgain")
             };
             
             var contentPanel = new StackPanel
@@ -467,20 +539,20 @@ namespace DiscordActivityMockV2
             
             contentPanel.Children.Add(new TextBlock
             {
-                Text = "A dialog will appear saying \"Could not create a new document\". This is expected - DO NOT close it, as this will stop the activity.",
+                Text = Localization.Get("WarningMessage1"),
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
             });
             
             contentPanel.Children.Add(new TextBlock
             {
-                Text = "If this dialog is annoying, enable 'Hide WordPad' to automatically hide it after a delay.",
+                Text = Localization.Get("WarningMessage2"),
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 153, 170, 181))
             });
             
             contentPanel.Children.Add(new TextBlock
             {
-                Text = "Note: Discord may not detect the activity if it's hidden too quickly. If this happens, increase the hide delay or disable hiding.",
+                Text = Localization.Get("WarningMessage3"),
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 250, 166, 26))
             });
@@ -489,12 +561,13 @@ namespace DiscordActivityMockV2
             
             var dialog = new ContentDialog
             {
-                Title = "Before Starting",
+                Title = Localization.Get("BeforeStarting"),
                 Content = contentPanel,
-                PrimaryButtonText = "Start",
-                CloseButtonText = "Cancel",
+                PrimaryButtonText = Localization.Get("Start"),
+                CloseButtonText = Localization.Get("Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = this.Content.XamlRoot
+                XamlRoot = this.Content.XamlRoot,
+                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
             
             var result = await dialog.ShowAsync();
@@ -1084,29 +1157,22 @@ namespace DiscordActivityMockV2
 
         private void GitHubBtn_Click(object sender, RoutedEventArgs e)
         {
-            OpenUrl("https://github.com/iiroak/DiscordActivityMock");
+            OpenUrl("https://github.com/iiroak");
         }
         private void DiscordBtn_Click(object sender, RoutedEventArgs e)
         {
-            OpenUrl("https://discord.gg/your-discord-invite");
-        }
-
-        private void TwitterBtn_Click(object sender, RoutedEventArgs e)
-        {
-            OpenUrl("https://twitter.com/iiroak");
+            OpenUrl("https://discord.gg/U253PPeMMY");
         }
 
         private async void InfoBtn_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new ContentDialog
             {
-                Title = "About Discord Activity Mock",
-                Content = "Discord Activity Mock V2\n\n" +
-                          "This tool allows you to mock Discord activities by renaming WordPad to appear as different games.\n\n" +
-                          "Created by iiroak\n" +
-                          "Version 2.0",
-                CloseButtonText = "OK",
-                XamlRoot = this.Content.XamlRoot
+                Title = Localization.Get("AboutTitle"),
+                Content = Localization.Get("AboutContent"),
+                CloseButtonText = Localization.Get("OK"),
+                XamlRoot = this.Content.XamlRoot,
+                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
             await dialog.ShowAsync();
         }

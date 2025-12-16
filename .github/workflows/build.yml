@@ -1,0 +1,91 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+    paths-ignore:
+      - 'resources/**'
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'resources/**'
+      - '**.md'
+      - 'LICENSE'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        platform: [x64, x86, arm64]
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Restore dependencies
+      run: dotnet restore
+      
+    - name: Build
+      run: dotnet publish -c Release -r win-${{ matrix.platform }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/${{ matrix.platform }}
+      
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DiscordActivityMock-win-${{ matrix.platform }}
+        path: publish/${{ matrix.platform }}/
+        
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download x64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DiscordActivityMock-win-x64
+        path: artifacts/x64
+        
+    - name: Download x86 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DiscordActivityMock-win-x86
+        path: artifacts/x86
+        
+    - name: Download arm64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DiscordActivityMock-win-arm64
+        path: artifacts/arm64
+        
+    - name: Create ZIP files
+      run: |
+        cd artifacts
+        zip -r ../DiscordActivityMock-win-x64.zip x64/
+        zip -r ../DiscordActivityMock-win-x86.zip x86/
+        zip -r ../DiscordActivityMock-win-arm64.zip arm64/
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          DiscordActivityMock-win-x64.zip
+          DiscordActivityMock-win-x86.zip
+          DiscordActivityMock-win-arm64.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
