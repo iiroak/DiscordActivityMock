@@ -95,20 +95,20 @@
                                 <TextBlock Text="1" Foreground="White" FontWeight="Bold" FontSize="12"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <TextBlock Text="Get WordPad" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="Step1TitleText" Text="Get WordPad" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                         
                         <StackPanel Spacing="6">
                             <Button x:Name="WordPadSystemBtn" HorizontalAlignment="Stretch" Padding="10,8" Click="WordPadSystemBtn_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <FontIcon Glyph="&#xE8B7;" FontSize="14"/>
-                                    <TextBlock Text="Copy from System" FontSize="12"/>
+                                    <TextBlock x:Name="CopyFromSystemText" Text="Copy from System" FontSize="12"/>
                                 </StackPanel>
                             </Button>
                             <Button x:Name="WordPadGitHubBtn" HorizontalAlignment="Stretch" Padding="10,8" Click="WordPadGitHubBtn_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <FontIcon Glyph="&#xE896;" FontSize="14"/>
-                                    <TextBlock Text="Download Backup" FontSize="12"/>
+                                    <TextBlock x:Name="DownloadBackupText" Text="Download Backup" FontSize="12"/>
                                 </StackPanel>
                             </Button>
                         </StackPanel>
@@ -128,7 +128,7 @@
                                 <TextBlock Text="2" Foreground="White" FontWeight="Bold" FontSize="12"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <TextBlock Text="Select Activity" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="Step2TitleText" Text="Select Activity" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             <ProgressRing x:Name="LoadingRing" IsActive="False" Width="18" Height="18" Margin="8,0,0,0"/>
                         </StackPanel>
                         
@@ -190,7 +190,7 @@
                             <TextBlock Text="3" Foreground="White" FontWeight="Bold" FontSize="12"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <TextBlock Text="Run Activity" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="Step3TitleText" Text="Run Activity" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                     
                     <!-- Hide WordPad Button with Flyout -->
@@ -303,7 +303,7 @@
                         </Button.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE768;" FontSize="14"/>
-                            <TextBlock Text="Start" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="StartBtnText" Text="Start" FontWeight="SemiBold"/>
                         </StackPanel>
                     </Button>
                     
@@ -320,7 +320,7 @@
                         </Button.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE71A;" FontSize="14"/>
-                            <TextBlock Text="Stop" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="StopBtnText" Text="Stop" FontWeight="SemiBold"/>
                         </StackPanel>
                     </Button>
                 </Grid>
@@ -345,38 +345,31 @@
                             Background="Transparent" BorderThickness="0" Padding="8,6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE943;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Text="GitHub" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="GitHubBtnText" Text="GitHub" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="DiscordBtn" ToolTipService.ToolTip="Discord" Click="DiscordBtn_Click"
                             Background="Transparent" BorderThickness="0" Padding="8,6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE8BD;" FontSize="14" Foreground="#5865F2"/>
-                            <TextBlock Text="Discord" FontSize="11" Foreground="#5865F2"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="TwitterBtn" ToolTipService.ToolTip="Twitter" Click="TwitterBtn_Click"
-                            Background="Transparent" BorderThickness="0" Padding="8,6">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE890;" FontSize="14" Foreground="#1DA1F2"/>
-                            <TextBlock Text="Twitter" FontSize="11" Foreground="#1DA1F2"/>
+                            <TextBlock x:Name="DiscordBtnText" Text="Discord" FontSize="11" Foreground="#5865F2"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="InfoBtn" ToolTipService.ToolTip="About" Click="InfoBtn_Click"
                             Background="Transparent" BorderThickness="0" Padding="8,6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="#43b581"/>
-                            <TextBlock Text="About" FontSize="11" Foreground="#43b581"/>
+                            <TextBlock x:Name="AboutBtnText" Text="About" FontSize="11" Foreground="#43b581"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
                 
                 <!-- Credits (Right) -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                    <TextBlock Text="Made with" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="MadeWithText" Text="Made with" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <FontIcon Glyph="&#xEB52;" FontSize="11" Foreground="#ed4245"/>
-                    <TextBlock Text="by" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    <HyperlinkButton Content="iiroak" NavigateUri="https://github.com/iiroak" Padding="0" FontSize="11"/>
+                    <TextBlock x:Name="ByText" Text="by" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <HyperlinkButton Content="iroaK" NavigateUri="https://github.com/iiroak" Padding="0" FontSize="11"/>
                 </StackPanel>
             </Grid>
         </Border>
