@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "DiscordActivityMockV2 (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "DiscordActivityMockV2 (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

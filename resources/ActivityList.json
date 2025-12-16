@@ -3,5 +3,85 @@
         "name": "Genshin Impact",
         "folder": "Genshin Impact game",
         "exe": "GenshinImpact.exe"
+    },
+    {
+        "name": "Lost Ark",
+        "folder": "Win64",
+        "exe": "LOSTARK"
+    },
+    {
+        "name": "Fortnite",
+        "folder": "Win64",
+        "exe": "FortniteClient-Win64-Shipping"
+    },
+    {
+        "name": "Grand Theft Auto V",
+        "folder": "Win64",
+        "exe": "GTA5"
+    },
+    {
+        "name": "Street Fighter 6",
+        "folder": "Street Fighter 6",
+        "exe": "StreetFighter6"
+    },
+    {
+        "name": "Throne and Liberty",
+        "folder": "Win64",
+        "exe": "TL"
+    },
+    {
+        "name": "Rec Room",
+        "folder": "Win64",
+        "exe": "recroom"
+    },
+    {
+        "name": "The Sims 4",
+        "folder": "Win64",
+        "exe": "TS4"
+    },
+    {
+        "name": "Starlight ReVolver",
+        "folder": "Starlight ReVolver Demo",
+        "exe": "HalcyonDive"
+    },
+    {
+        "name": "R.E.P.O.",
+        "folder": "REPO",
+        "exe": "REPO"
+    },
+    {
+        "name": "War Thunder",
+        "folder": "Win64",
+        "exe": "aces"
+    },
+    {
+        "name": "Skate",
+        "folder": "skate",
+        "exe": "Skate"
+    },
+    {
+        "name": "Blue Protocol",
+        "folder": "bpsr",
+        "exe": "BPSR_STEAM"
+    },
+    {
+        "name": "Delta Force",
+        "folder": "Win64",
+        "exe": "deltaforceclient-Win64-Shipping"
+    },
+    {
+        "name": "Comet AI",
+        "folder": "Perplexity/Comet/Application",
+        "exe": "Comet"
+    },
+    {
+        "name": "PVZ Replanted",
+        "folder": "PVZ Replanted",
+        "exe": "Replanted"
+    },
+    {
+        "name": "Terminull Brigade",
+        "folder": "Win64",
+        "exe": "M1-Win64-Shipping"
     }
 ]
