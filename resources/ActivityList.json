@@ -177,7 +177,13 @@
     {
         "name": "EA SPORTS FC 27",
         "folder": "EA SPORTS FC 27",
-        "exe": "fc27"
+        "exe": "fc27",
+        "steamManifest": {
+            "appId": "4080220",
+            "name": "EA SPORTS FC™ 27",
+            "stateFlags": "4",
+            "installDir": "EA SPORTS FC 27"
+        }
     },
     {
         "name": "EMPULSE",
