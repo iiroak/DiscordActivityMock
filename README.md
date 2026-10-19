@@ -50,6 +50,8 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 1. Download the matching architecture's standalone `.exe` or `.zip` from [Releases](https://github.com/iiroak/DiscordActivityMock/releases)
 2. Run the `.exe` directly, or extract the ZIP and run the included executable. Both are self-contained and do not require a separate .NET installation.
 
+Keep the executable's versioned filename unchanged; WinUI single-file apps require the name they were built with. The ZIP preserves the correct executable name when extracted.
+
 Each release includes x64, x86, and ARM64 builds; GitHub also provides the source-code ZIP and tarball. Release availability depends on a maintainer publishing a tagged build. The app checks for releases but does not install updates automatically.
 
 ### Usage
