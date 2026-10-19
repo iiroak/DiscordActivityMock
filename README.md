@@ -35,7 +35,9 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 
 ## 📸 Screenshots
 
-<!-- Add screenshots here -->
+<p align="center">
+  <img src="docs/screenshot.png" alt="Discord Activity Mock main window" width="900">
+</p>
 
 ## 🚀 Getting Started
 
