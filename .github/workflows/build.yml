@@ -5,16 +5,8 @@ on:
     branches: [ main ]
     tags:
       - 'v*'
-    paths-ignore:
-      - 'resources/**'
-      - '**.md'
-      - 'LICENSE'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - 'resources/**'
-      - '**.md'
-      - 'LICENSE'
   workflow_dispatch:
     inputs:
       create_release:
@@ -22,6 +14,10 @@ on:
         required: false
         default: 'false'
         type: boolean
+      tag_name:
+        description: 'Release tag (required for manual releases, e.g. v2.1.0)'
+        required: false
+        type: string
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -74,7 +70,7 @@ jobs:
       
     - name: Publish
       run: |
-        dotnet publish DiscordActivityMockV2.csproj -c Release -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }} -p:PublishReadyToRun=false -p:SelfContained=true --no-build -o publish/${{ matrix.rid }}
+        dotnet publish DiscordActivityMockV2.csproj -c Release -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }} -p:PublishReadyToRun=false -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugSymbols=false -p:DebugType=None --no-build -o publish/${{ matrix.rid }}
       
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -86,8 +82,28 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    permissions:
+      contents: write
     
     steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    - name: Validate manual release tag
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
+      shell: pwsh
+      env:
+        RELEASE_TAG: ${{ github.event.inputs.tag_name }}
+      run: |
+        if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+          throw 'A valid tag such as v2.1.0 is required for a manual release.'
+        }
+        git fetch --depth=1 origin "refs/tags/$env:RELEASE_TAG:refs/tags/$env:RELEASE_TAG"
+        $tagCommit = git rev-list -n 1 $env:RELEASE_TAG
+        if ($tagCommit -ne $env:GITHUB_SHA) {
+          throw 'The selected release tag must point to the exact commit that was built.'
+        }
+
     - name: Download x64 artifact
       uses: actions/download-artifact@v4
       with:
@@ -106,20 +122,31 @@ jobs:
         name: DiscordActivityMock-win-arm64
         path: artifacts/win-arm64
         
-    - name: Create ZIP files
+    - name: Package standalone executables and ZIPs
+      shell: bash
       run: |
-        cd artifacts
-        zip -r ../DiscordActivityMock-win-x64.zip win-x64/
-        zip -r ../DiscordActivityMock-win-x86.zip win-x86/
-        zip -r ../DiscordActivityMock-win-arm64.zip win-arm64/
+        set -euo pipefail
+        for arch in win-x64 win-x86 win-arm64; do
+          package="release-package/$arch"
+          mkdir -p "$package"
+          mv "artifacts/$arch/DiscordActivityMockV2.exe" "artifacts/$arch/DiscordActivityMock-$arch.exe"
+          cp -R "artifacts/$arch/." "$package/"
+          cp "$package/DiscordActivityMock-$arch.exe" "$GITHUB_WORKSPACE/"
+          (cd "$package" && zip -r "$GITHUB_WORKSPACE/DiscordActivityMock-$arch.zip" .)
+        done
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || github.ref_name }}
         files: |
+          DiscordActivityMock-win-x64.exe
           DiscordActivityMock-win-x64.zip
+          DiscordActivityMock-win-x86.exe
           DiscordActivityMock-win-x86.zip
+          DiscordActivityMock-win-arm64.exe
           DiscordActivityMock-win-arm64.zip
+        fail_on_unmatched_files: true
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

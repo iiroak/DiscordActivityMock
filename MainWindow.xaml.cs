@@ -1,18 +1,22 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
 
 namespace DiscordActivityMockV2
@@ -22,6 +26,7 @@ namespace DiscordActivityMockV2
         public string name { get; set; } = "";
         public string folder { get; set; } = "";
         public string exe { get; set; } = "";
+        public SteamManifestItem? steamManifest { get; set; }
     }
     
     public class AppSettings
@@ -35,6 +40,7 @@ namespace DiscordActivityMockV2
     }
 
     [JsonSerializable(typeof(ActivityItem[]))]
+    [JsonSerializable(typeof(SteamManifestItem))]
     [JsonSerializable(typeof(AppSettings))]
     [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true, WriteIndented = true)]
     internal partial class AppJsonContext : JsonSerializerContext
@@ -52,11 +58,17 @@ namespace DiscordActivityMockV2
         private static readonly string settingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DiscordActivityMock", "settings.json");
+        private static readonly string tempSessionsPath = Path.Combine(
+            Path.GetTempPath(), "DiscordActivityMock", "Sessions");
 
         private static readonly string githubActivityList = "https://raw.githubusercontent.com/iiroak/DiscordActivityMock/refs/heads/main/resources/ActivityList.json";
         private static readonly string githubWordPad = "https://raw.githubusercontent.com/iiroak/DiscordActivityMock/refs/heads/main/resources/WordPad.zip";
+        private const string WordPadArchiveSha256 = "79baf35a1a7149323f94fd70a0821936e9585f27644fd204839b88cd77b09ae3";
+        private static readonly HttpClient activityHttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
         
         private string? _originalWordPadPath;  // Path to original WordPad backup
+        private string? _sessionRootPath;
+        private string? _workingRootPath;
         private string? _currentFolderPath;    // Current working folder path
         private string? _currentExePath;       // Current executable path
         private string _lastFolderName = "";   // Last folder name used
@@ -64,6 +76,7 @@ namespace DiscordActivityMockV2
         private ActivityItem[]? _downloadedActivities;
         private Process? _runningProcess;
         private bool _isActivityRunning = false;
+        private bool _isStarting = false;
         private bool _isCustomActivity = false;
         
         // Timer for tracking activity duration
@@ -74,6 +87,10 @@ namespace DiscordActivityMockV2
         private DispatcherTimer? _autoStopTimer;
         private bool _autoStopEnabled = false;
         private int _autoStopMinutes = 30;
+        private CancellationTokenSource? _hideCancellation;
+        private long _activitySessionId;
+        private readonly CancellationTokenSource _windowLifetime = new();
+        private readonly SemaphoreSlim _dialogSemaphore = new(1, 1);
         
         // Hide settings
         private bool _hideEnabled = true;
@@ -86,6 +103,8 @@ namespace DiscordActivityMockV2
         private AppWindow? _appWindow;
         private IntPtr _hwnd;
         private bool _isDarkTheme = true;
+        private bool _isInitializing = true;
+        private bool _isWindowClosed;
 
         public MainWindow()
         {
@@ -111,6 +130,21 @@ namespace DiscordActivityMockV2
             var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
             _appWindow.Resize(new SizeInt32(900, 440));
+
+            try
+            {
+                string? windowIconPath = ResolveBundledAssetPath(Path.Combine("Assets", "logo.ico"));
+                if (windowIconPath != null)
+                    _appWindow.SetIcon(windowIconPath);
+
+                string? logoImagePath = ResolveBundledAssetPath(Path.Combine("Assets", "logo.png"));
+                if (logoImagePath != null)
+                    AppLogoImage.Source = new BitmapImage(new Uri(logoImagePath));
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Load application logo", ex);
+            }
             
             // Setup custom titlebar (fully custom, hide system buttons)
             SetupCustomTitleBar();
@@ -124,6 +158,8 @@ namespace DiscordActivityMockV2
             
             // Apply localization to UI
             ApplyLocalization();
+
+            _isInitializing = false;
             
             // Check for updates on startup
             _ = CheckForUpdatesAsync();
@@ -148,7 +184,7 @@ namespace DiscordActivityMockV2
                         RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
                     };
                     
-                    var result = await dialog.ShowAsync();
+                    var result = await ShowContentDialogAsync(dialog);
                     
                     if (result == ContentDialogResult.Primary)
                     {
@@ -156,7 +192,10 @@ namespace DiscordActivityMockV2
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Update check", ex);
+            }
         }
 
         private void SetupCustomTitleBar()
@@ -212,8 +251,11 @@ namespace DiscordActivityMockV2
 
         private void Window_Closed(object sender, WindowEventArgs args)
         {
+            _isWindowClosed = true;
+            _windowLifetime.Cancel();
             StopRunningProcess();
-            CleanTemporaryFiles();
+            if (!_isActivityRunning)
+                CleanTemporaryFiles();
         }
         
         #region Window Controls
@@ -324,15 +366,22 @@ namespace DiscordActivityMockV2
 
         private void UpdateActivityControls()
         {
+            if (_isWindowClosed)
+                return;
+
             bool wordPadReady = !string.IsNullOrEmpty(_currentExePath);
-            StartActivityBtn.IsEnabled = !_isActivityRunning && wordPadReady;
+            StartActivityBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
             StopActivityBtn.IsEnabled = _isActivityRunning;
-            FolderNameTxt.IsEnabled = !_isActivityRunning && _isCustomActivity;
-            FileExeTxt.IsEnabled = !_isActivityRunning && _isCustomActivity;
-            ClearBtn.IsEnabled = !_isActivityRunning && _isCustomActivity;
-            ActivityListCombo.IsEnabled = !_isActivityRunning;
-            HideSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning;
-            TimerSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning;
+            FolderNameTxt.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
+            FileExeTxt.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
+            ClearBtn.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
+            ActivityListCombo.IsEnabled = !_isActivityRunning && !_isStarting;
+            ActivitySearchBox.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
+            FetchActivitiesBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
+            WordPadSystemBtn.IsEnabled = !_isActivityRunning && !_isStarting;
+            WordPadGitHubBtn.IsEnabled = !_isActivityRunning && !_isStarting;
+            HideSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
+            TimerSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
             
             // Update status indicator
             if (_isActivityRunning)
@@ -355,10 +404,17 @@ namespace DiscordActivityMockV2
         
         private void AutoStopTimer_Tick(object? sender, object e)
         {
-            // Time's up - stop the activity
             _autoStopTimer?.Stop();
-            StopRunningProcess();
-            _activityTimer?.Stop();
+            if (StopRunningProcess())
+            {
+                _activityTimer?.Stop();
+                TimerText.Text = "00:00:00";
+            }
+            else
+            {
+                WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                WordPadStatusBar.Message = "Windows could not stop the activity process.";
+            }
             UpdateActivityControls();
         }
 
@@ -377,19 +433,26 @@ namespace DiscordActivityMockV2
                     if (settings != null)
                     {
                         _hideEnabled = settings.HideEnabled;
-                        _hideDelaySeconds = settings.HideDelaySeconds;
                         _autoStopEnabled = settings.AutoStopEnabled;
-                        _autoStopMinutes = settings.AutoStopMinutes;
+                        _autoStopMinutes = Math.Clamp(settings.AutoStopMinutes, 1, 1440);
                         _dontShowStartWarning = settings.DontShowStartWarning;
                         _isDarkTheme = settings.IsDarkTheme;
+                        _hideDelaySeconds = Math.Clamp(settings.HideDelaySeconds, 1, 60);
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Load settings", ex);
+            }
         }
         
         private void SaveSettings()
         {
+            if (_isInitializing)
+                return;
+
+            string? tempPath = null;
             try
             {
                 var settings = new AppSettings
@@ -409,9 +472,21 @@ namespace DiscordActivityMockV2
                 }
                 
                 string json = JsonSerializer.Serialize(settings, AppJsonContext.Default.AppSettings);
-                File.WriteAllText(settingsPath, json);
+                tempPath = settingsPath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, settingsPath, true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Save settings", ex);
+            }
+            finally
+            {
+                if (tempPath != null && File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { }
+                }
+            }
         }
         
         private void ApplyLoadedSettings()
@@ -429,46 +504,167 @@ namespace DiscordActivityMockV2
 
         #region Utility Methods
 
-        private void StopRunningProcess()
+        private bool StopRunningProcess()
         {
-            if (_runningProcess != null && !_runningProcess.HasExited)
+            _hideCancellation?.Cancel();
+            _hideCancellation?.Dispose();
+            _hideCancellation = null;
+
+            var process = _runningProcess;
+            if (process == null)
             {
-                try
-                {
-                    _runningProcess.Kill();
-                    _runningProcess.Dispose();
-                }
-                catch { }
+                _activitySessionId++;
+                _isActivityRunning = false;
+                return true;
             }
+
+            bool hasExited;
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(5000);
+                }
+                hasExited = process.HasExited;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Stop activity process", ex);
+                try { hasExited = process.HasExited; }
+                catch { hasExited = false; }
+            }
+
+            if (!hasExited)
+            {
+                _isActivityRunning = true;
+                return false;
+            }
+
+            _activitySessionId++;
             _runningProcess = null;
             _isActivityRunning = false;
+            process.Dispose();
+            return true;
         }
+
         private void CleanTemporaryFiles()
         {
             try
             {
-                // Clean original backup
-                if (!string.IsNullOrEmpty(_originalWordPadPath) && Directory.Exists(_originalWordPadPath))
+                if (!string.IsNullOrEmpty(_sessionRootPath) && Directory.Exists(_sessionRootPath) && IsOwnedSessionRoot(_sessionRootPath))
                 {
-                    Directory.Delete(_originalWordPadPath, true);
-                }
-                
-                // Clean current working folder
-                if (!string.IsNullOrEmpty(_currentFolderPath) && Directory.Exists(_currentFolderPath))
-                {
-                    Directory.Delete(_currentFolderPath, true);
+                    Directory.Delete(_sessionRootPath, true);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Silently ignore cleanup errors
+                AppLog.Error("Clean temporary session", ex);
             }
             finally
             {
                 _originalWordPadPath = null;
+                _sessionRootPath = null;
+                _workingRootPath = null;
                 _currentFolderPath = null;
                 _currentExePath = null;
+                _lastFolderName = "";
+                _lastExeName = "";
             }
+        }
+
+        private string CreateSessionRoot()
+        {
+            Directory.CreateDirectory(tempSessionsPath);
+            string sessionRoot = Path.Combine(tempSessionsPath, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(sessionRoot);
+            _sessionRootPath = sessionRoot;
+            return sessionRoot;
+        }
+
+        private static bool IsOwnedSessionRoot(string path)
+        {
+            try
+            {
+                string root = Path.GetFullPath(tempSessionsPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                string candidate = Path.GetFullPath(path);
+                return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase) &&
+                       Guid.TryParseExact(Path.GetFileName(candidate), "N", out _);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsPathWithin(string root, string path)
+        {
+            try
+            {
+                string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                string fullPath = Path.GetFullPath(path);
+                return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string? ResolveBundledAssetPath(string relativePath)
+        {
+            string appDirectoryPath = Path.Combine(AppContext.BaseDirectory, relativePath);
+            if (File.Exists(appDirectoryPath))
+                return appDirectoryPath;
+
+            string processName = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "DiscordActivityMockV2");
+            string extractionRoot = Path.Combine(Path.GetTempPath(), ".net", processName);
+            if (!Directory.Exists(extractionRoot))
+                return null;
+
+            return Directory.GetDirectories(extractionRoot)
+                .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .Select(directory => Path.Combine(directory, relativePath))
+                .FirstOrDefault(File.Exists);
+        }
+
+        private static string ResolveChildPath(string root, string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+                throw new ArgumentException("The folder must be a relative path.");
+
+            string normalized = relativePath.Replace('/', Path.DirectorySeparatorChar)
+                                            .Replace('\\', Path.DirectorySeparatorChar);
+            var segments = normalized.Split(Path.DirectorySeparatorChar);
+            if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || segment == "." || segment == ".." ||
+                                        segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                                        segment.EndsWith(' ') || segment.EndsWith('.')))
+                throw new ArgumentException("The folder name contains an invalid path segment.");
+
+            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string fullPath = Path.GetFullPath(Path.Combine(fullRoot, normalized));
+            if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The folder must remain inside the private working directory.");
+            return fullPath;
+        }
+
+        private static string NormalizeExecutableName(string input)
+        {
+            string name = input.Trim();
+            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                name = name[..^4];
+
+            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." ||
+                Path.IsPathRooted(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                name.EndsWith(' ') || name.EndsWith('.') || name.Contains('/') || name.Contains('\\'))
+                throw new ArgumentException("The executable name is invalid.");
+
+            string deviceName = name.Split('.')[0];
+            if (new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" }
+                .Contains(deviceName, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException("The executable name is reserved by Windows.");
+
+            return name;
         }
 
         /// <summary>
@@ -476,21 +672,21 @@ namespace DiscordActivityMockV2
         /// </summary>
         private bool ResetToOriginal()
         {
-            if (string.IsNullOrEmpty(_originalWordPadPath) || !Directory.Exists(_originalWordPadPath))
+            if (string.IsNullOrEmpty(_originalWordPadPath) || !Directory.Exists(_originalWordPadPath) ||
+                string.IsNullOrEmpty(_workingRootPath) || !IsOwnedSessionRoot(_sessionRootPath ?? ""))
                 return false;
 
             try
             {
-                // Delete current working folder if it exists and is different
-                if (!string.IsNullOrEmpty(_currentFolderPath) && 
-                    Directory.Exists(_currentFolderPath) && 
-                    _currentFolderPath != _originalWordPadPath)
-                {
-                    Directory.Delete(_currentFolderPath, true);
-                }
+                string fullWorkingRoot = Path.GetFullPath(_workingRootPath);
+                string fullSessionRoot = Path.GetFullPath(_sessionRootPath!);
+                if (!fullWorkingRoot.StartsWith(fullSessionRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return false;
 
-                // Create a fresh copy from original
-                string workingPath = Path.Combine(Path.GetTempPath(), "WordPadWorking_" + Guid.NewGuid().ToString("N")[..8]);
+                if (Directory.Exists(fullWorkingRoot))
+                    Directory.Delete(fullWorkingRoot, true);
+
+                string workingPath = Path.Combine(fullWorkingRoot, "WordPad");
                 Directory.CreateDirectory(workingPath);
 
                 foreach (var file in Directory.GetFiles(_originalWordPadPath))
@@ -522,7 +718,29 @@ namespace DiscordActivityMockV2
                 XamlRoot = this.Content.XamlRoot,
                 RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
-            await dialog.ShowAsync();
+            await ShowContentDialogAsync(dialog);
+        }
+
+        private async Task<ContentDialogResult?> ShowContentDialogAsync(ContentDialog dialog)
+        {
+            await _dialogSemaphore.WaitAsync();
+            try
+            {
+                if (_isWindowClosed)
+                    return null;
+                try
+                {
+                    return await dialog.ShowAsync();
+                }
+                catch when (_isWindowClosed)
+                {
+                    return null;
+                }
+            }
+            finally
+            {
+                _dialogSemaphore.Release();
+            }
         }
         
         private async Task<bool> ShowStartWarningDialog()
@@ -570,7 +788,7 @@ namespace DiscordActivityMockV2
                 RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
             
-            var result = await dialog.ShowAsync();
+            var result = await ShowContentDialogAsync(dialog);
             
             if (dontShowCheckBox.IsChecked == true)
             {
@@ -585,14 +803,19 @@ namespace DiscordActivityMockV2
 
         #region Step 1: Copy or Download WordPad
 
-        private string CopyWordPadFolder()
+        private async Task<string> CopyWordPadFolder()
         {
-            string pathWordPad = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Windows NT", "Accessories");
-            string backupPath = Path.Combine(Path.GetTempPath(), "WordPadOriginal_" + Guid.NewGuid().ToString("N")[..8]);
+            string programFiles = Environment.GetEnvironmentVariable("ProgramW6432") ??
+                                  Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string pathWordPad = Path.Combine(programFiles, "Windows NT", "Accessories");
             
             try
             {
                 CleanTemporaryFiles();
+                if (!Directory.Exists(pathWordPad) || !File.Exists(Path.Combine(pathWordPad, "wordpad.exe")))
+                    throw new FileNotFoundException("WordPad was removed from this Windows installation.");
+
+                string backupPath = Path.Combine(CreateSessionRoot(), "Original");
                 Directory.CreateDirectory(backupPath);
                 
                 foreach (var file in Directory.GetFiles(pathWordPad))
@@ -601,31 +824,29 @@ namespace DiscordActivityMockV2
                     File.Copy(file, destFile, true);
                 }
 
-                // Verify wordpad.exe exists
-                if (!File.Exists(Path.Combine(backupPath, "wordpad.exe")))
-                {
-                    Directory.Delete(backupPath, true);
-                    _ = ShowDialogAsync("Error", "WordPad executable not found in system folder.");
-                    return "";
-                }
+                ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
+                return backupPath;
             }
             catch (Exception ex)
             {
-                _ = ShowDialogAsync("Error", $"Error copying WordPad folder: {ex.Message}");
+                AppLog.Error("Copy WordPad", ex);
+                CleanTemporaryFiles();
+                await ShowDialogAsync("WordPad unavailable", ex.Message);
                 return "";
             }
-            
-            return backupPath;
         }
 
         private async Task<string> DownloadAndExtractWordPad()
         {
             string backupPath = Path.Combine(Path.GetTempPath(), "WordPadOriginal_" + Guid.NewGuid().ToString("N")[..8]);
             string zipPath = Path.Combine(Path.GetTempPath(), "WordPad_" + Guid.NewGuid().ToString("N")[..8] + ".zip");
+            bool extractionSucceeded = false;
             
             try
             {
                 CleanTemporaryFiles();
+                string sessionRoot = CreateSessionRoot();
+                backupPath = Path.Combine(sessionRoot, "Original");
                 
                 WordPadStatusBar.Severity = InfoBarSeverity.Informational;
                 WordPadStatusBar.Message = "Downloading...";
@@ -633,32 +854,65 @@ namespace DiscordActivityMockV2
                 using (HttpClient client = new HttpClient())
                 {
                     client.Timeout = TimeSpan.FromMinutes(2);
-                    byte[] zipData = await client.GetByteArrayAsync(githubWordPad);
-                    await File.WriteAllBytesAsync(zipPath, zipData);
+                    using var response = await client.GetAsync(githubWordPad, HttpCompletionOption.ResponseHeadersRead, _windowLifetime.Token);
+                    response.EnsureSuccessStatusCode();
+                    if (response.Content.Headers.ContentLength is long contentLength && contentLength > 50 * 1024 * 1024)
+                        throw new InvalidDataException("The WordPad archive exceeds the allowed download size.");
+
+                    await using var source = await response.Content.ReadAsStreamAsync(_windowLifetime.Token);
+                    await using var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
+                    var buffer = new byte[81920];
+                    long downloaded = 0;
+                    int bytesRead;
+                    while ((bytesRead = await source.ReadAsync(buffer.AsMemory(), _windowLifetime.Token)) > 0)
+                    {
+                        downloaded += bytesRead;
+                        if (downloaded > 50 * 1024 * 1024)
+                            throw new InvalidDataException("The WordPad archive exceeds the allowed download size.");
+                        await destination.WriteAsync(buffer.AsMemory(0, bytesRead), _windowLifetime.Token);
+                    }
                 }
+
+                await using var archiveStream = File.OpenRead(zipPath);
+                string archiveHash = Convert.ToHexString(await SHA256.HashDataAsync(archiveStream));
+                archiveStream.Close();
+                if (!archiveHash.Equals(WordPadArchiveSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The downloaded WordPad archive failed its integrity check.");
 
                 WordPadStatusBar.Message = "Preparing files...";
                 Directory.CreateDirectory(backupPath);
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    long uncompressedSize = archive.Entries.Sum(entry => entry.Length);
+                    if (uncompressedSize > 50 * 1024 * 1024 || archive.Entries.Count > 100)
+                        throw new InvalidDataException("The WordPad archive contains an unexpected amount of data.");
+
+                    string extractionRoot = Path.GetFullPath(backupPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    foreach (var entry in archive.Entries)
+                    {
+                        string destination = Path.GetFullPath(Path.Combine(backupPath, entry.FullName));
+                        if (!destination.StartsWith(extractionRoot, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("The WordPad archive contains an invalid file path.");
+                    }
+                }
                 ZipFile.ExtractToDirectory(zipPath, backupPath);
                 File.Delete(zipPath);
 
                 string wordpadPath = Path.Combine(backupPath, "wordpad.exe");
-                if (!File.Exists(wordpadPath))
-                {
-                    await ShowDialogAsync("Error", "WordPad executable not found in downloaded files.");
-                    return "";
-                }
-                
+                ValidateWordPadExecutable(wordpadPath);
+                extractionSucceeded = true;
                 return backupPath;
             }
             catch (HttpRequestException ex)
             {
+                AppLog.Error("Download WordPad", ex);
                 await ShowDialogAsync("Download Error", $"Error downloading WordPad: {ex.Message}");
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
                 WordPadStatusBar.Message = "Download failed";
             }
             catch (Exception ex)
             {
+                AppLog.Error("Extract WordPad", ex);
                 await ShowDialogAsync("Extraction Error", $"Error extracting WordPad: {ex.Message}");
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
                 WordPadStatusBar.Message = "Failed to extract";
@@ -669,6 +923,8 @@ namespace DiscordActivityMockV2
                 {
                     try { File.Delete(zipPath); } catch { }
                 }
+                if (!extractionSucceeded && !string.IsNullOrEmpty(_sessionRootPath))
+                    CleanTemporaryFiles();
             }
             
             return "";
@@ -676,58 +932,108 @@ namespace DiscordActivityMockV2
 
         private void SetupWordPadPaths(string backupPath)
         {
+            if (string.IsNullOrEmpty(_sessionRootPath) || !IsOwnedSessionRoot(_sessionRootPath) ||
+                !Path.GetFullPath(backupPath).StartsWith(Path.GetFullPath(_sessionRootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The WordPad files are outside the private session directory.");
+
             _originalWordPadPath = backupPath;
-            
-            // Create working copy
-            string workingPath = Path.Combine(Path.GetTempPath(), "WordPadWorking_" + Guid.NewGuid().ToString("N")[..8]);
-            Directory.CreateDirectory(workingPath);
-
-            foreach (var file in Directory.GetFiles(backupPath))
-            {
-                string destFile = Path.Combine(workingPath, Path.GetFileName(file));
-                File.Copy(file, destFile, true);
-            }
-
-            _currentFolderPath = workingPath;
-            _currentExePath = Path.Combine(workingPath, "wordpad.exe");
+            _workingRootPath = Path.Combine(_sessionRootPath, "Working");
+            if (!ResetToOriginal())
+                throw new IOException("Could not create an isolated working copy of WordPad.");
         }
 
-        private void WordPadSystemBtn_Click(object sender, RoutedEventArgs e)
+        private static void ValidateWordPadExecutable(string executablePath)
         {
-            SetLoading(true);
-            
-            string backupPath = CopyWordPadFolder();
-            if (backupPath != "")
+            if (!File.Exists(executablePath))
+                throw new FileNotFoundException("WordPad executable was not found in the source files.");
+
+            using var stream = File.OpenRead(executablePath);
+            using var reader = new BinaryReader(stream);
+            if (stream.Length < 64 || reader.ReadUInt16() != 0x5A4D)
+                throw new InvalidDataException("The WordPad executable is not a valid Windows application.");
+
+            stream.Position = 0x3C;
+            int peOffset = reader.ReadInt32();
+            if (peOffset < 0 || peOffset > stream.Length - 6)
+                throw new InvalidDataException("The WordPad executable has an invalid PE header.");
+
+            stream.Position = peOffset;
+            if (reader.ReadUInt32() != 0x00004550 || reader.ReadUInt16() != 0x8664)
+                throw new InvalidDataException("This WordPad copy is not a supported x64 executable.");
+
+            if (RuntimeInformation.OSArchitecture == Architecture.X86)
+                throw new PlatformNotSupportedException("The available WordPad copy requires 64-bit Windows.");
+        }
+
+        private async void WordPadSystemBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isActivityRunning || _isStarting || _isWindowClosed)
             {
+                await ShowDialogAsync("Activity running", "Stop the current activity before changing the WordPad source.");
+                return;
+            }
+
+            SetLoading(true);
+            try
+            {
+                string backupPath = await CopyWordPadFolder();
+                if (backupPath.Length == 0)
+                    return;
+
                 SetupWordPadPaths(backupPath);
                 WordPadStatusBar.Severity = InfoBarSeverity.Success;
                 WordPadStatusBar.Message = "Ready";
                 ToggleStep2(true);
-                
-                // Auto-fetch activities
-                _ = AutoFetchActivities();
+
+                await AutoFetchActivities();
             }
-            
-            SetLoading(false);
+            catch (Exception ex)
+            {
+                AppLog.Error("Prepare system WordPad", ex);
+                CleanTemporaryFiles();
+                WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                WordPadStatusBar.Message = "WordPad setup failed";
+                await ShowDialogAsync("WordPad setup failed", ex.Message);
+            }
+            finally
+            {
+                SetLoading(false);
+            }
         }
 
         private async void WordPadGitHubBtn_Click(object sender, RoutedEventArgs e)
         {
-            SetLoading(true);
-            
-            string backupPath = await DownloadAndExtractWordPad();
-            if (backupPath != "")
+            if (_isActivityRunning || _isStarting || _isWindowClosed)
             {
+                await ShowDialogAsync("Activity running", "Stop the current activity before changing the WordPad source.");
+                return;
+            }
+
+            SetLoading(true);
+            try
+            {
+                string backupPath = await DownloadAndExtractWordPad();
+                if (backupPath.Length == 0)
+                    return;
+
                 SetupWordPadPaths(backupPath);
                 WordPadStatusBar.Severity = InfoBarSeverity.Success;
                 WordPadStatusBar.Message = "Ready";
                 ToggleStep2(true);
-                
-                // Auto-fetch activities
                 await AutoFetchActivities();
             }
-            
-            SetLoading(false);
+            catch (Exception ex)
+            {
+                AppLog.Error("Prepare downloaded WordPad", ex);
+                CleanTemporaryFiles();
+                WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                WordPadStatusBar.Message = "WordPad setup failed";
+                await ShowDialogAsync("WordPad setup failed", ex.Message);
+            }
+            finally
+            {
+                SetLoading(false);
+            }
         }
 
         #endregion
@@ -736,7 +1042,7 @@ namespace DiscordActivityMockV2
 
         private void ActivityListCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (ActivityListCombo.SelectedIndex >= 0)
+            if (!_isStarting && !_isActivityRunning && ActivityListCombo.SelectedIndex >= 0)
             {
                 string selectedActivity = ActivityListCombo.SelectedItem?.ToString() ?? "";
                 
@@ -762,32 +1068,51 @@ namespace DiscordActivityMockV2
                 }
             }
         }
+
+        private ActivityItem? GetSelectedActivityItem()
+        {
+            string selectedActivity = ActivityListCombo.SelectedItem?.ToString() ?? "";
+            return _downloadedActivities?.FirstOrDefault(activity =>
+                string.Equals(activity.name, selectedActivity, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private async Task<bool> ConfirmSteamManifestSetupAsync(SteamManifestItem manifest)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Steam manifest required",
+                Content = $"This activity needs appmanifest_{manifest.appId}.acf. The mock executable and manifest will be created in a Steam library and kept there after the activity stops so Steam and Discord can detect them. Existing files will not be overwritten. If progress does not start, restart Steam and Discord. Continue?",
+                PrimaryButtonText = "Create and start",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot,
+                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+            };
+
+            return await ShowContentDialogAsync(dialog) == ContentDialogResult.Primary;
+        }
         
         private async Task AutoFetchActivities()
         {
-            // Auto-fetch activities silently
             if (_downloadedActivities != null && _downloadedActivities.Length > 0)
-                return; // Already fetched
-                
+                return;
+
             try
             {
                 LoadingRing.IsActive = true;
-                
-                using HttpClient client = new();
-                client.Timeout = TimeSpan.FromSeconds(30);
-                string jsonContent = await client.GetStringAsync(githubActivityList);
-                var activities = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ActivityItemArray);
-                
-                if (activities != null && activities.Length > 0)
-                {
-                    _downloadedActivities = activities.OrderBy(a => a.name, StringComparer.OrdinalIgnoreCase).ToArray();
-                    PopulateActivityList();
-                    ActivitySearchBox.IsEnabled = true;
-                }
+                var (activities, usedFallback) = await LoadActivitiesAsync();
+                ApplyActivities(activities);
+                if (usedFallback)
+                    WordPadStatusBar.Message = "Offline activity list loaded";
             }
-            catch
+            catch (Exception ex)
             {
-                // Silently ignore auto-fetch errors
+                AppLog.Error("Auto-fetch activity catalog", ex);
+                if (!_isWindowClosed)
+                {
+                    WordPadStatusBar.Severity = InfoBarSeverity.Warning;
+                    WordPadStatusBar.Message = $"Activity list unavailable: {ex.Message}";
+                }
             }
             finally
             {
@@ -797,80 +1122,154 @@ namespace DiscordActivityMockV2
 
         private async void FetchActivitiesBtn_Click(object sender, RoutedEventArgs e)
         {
+            if (_isActivityRunning || _isStarting || _isWindowClosed)
+                return;
+
             try
             {
                 FetchActivitiesBtn.IsEnabled = false;
                 LoadingRing.IsActive = true;
-                
-                using HttpClient client = new();
-                client.Timeout = TimeSpan.FromMinutes(1);
-                string jsonContent = await client.GetStringAsync(githubActivityList);
-                var activities = JsonSerializer.Deserialize(jsonContent, AppJsonContext.Default.ActivityItemArray);
-                
-                if (activities != null && activities.Length > 0)
-                {
-                    // Sort activities alphabetically by name
-                    _downloadedActivities = activities.OrderBy(a => a.name, StringComparer.OrdinalIgnoreCase).ToArray();
-                    
-                    PopulateActivityList();
-                    ActivitySearchBox.IsEnabled = true;
-                    ActivitySearchBox.Text = "";
-                }
-                else
-                {
-                    await ShowDialogAsync("Warning", "No activities found in the list.");
-                }
-            }
-            catch (HttpRequestException ex)
-            {
-                await ShowDialogAsync("Download Error", $"Error downloading activity list: {ex.Message}");
-            }
-            catch (JsonException ex)
-            {
-                await ShowDialogAsync("Parse Error", $"Error parsing activity list JSON: {ex.Message}");
+                var (activities, usedFallback) = await LoadActivitiesAsync();
+                ApplyActivities(activities);
+                ActivitySearchBox.Text = "";
+                if (usedFallback)
+                    await ShowDialogAsync("Offline mode", "The online list could not be loaded. The bundled activity list was used instead.");
             }
             catch (Exception ex)
             {
-                await ShowDialogAsync("Error", $"Unexpected error: {ex.Message}");
+                AppLog.Error("Fetch activity catalog", ex);
+                if (!_isWindowClosed)
+                    await ShowDialogAsync("Activity list error", ex.Message);
             }
             finally
             {
-                FetchActivitiesBtn.IsEnabled = true;
                 LoadingRing.IsActive = false;
+                if (!_isWindowClosed)
+                    UpdateActivityControls();
             }
         }
 
-        private void PopulateActivityList(string? searchFilter = null)
+        private async Task<(ActivityItem[] activities, bool usedFallback)> LoadActivitiesAsync()
+        {
+            Exception? onlineError = null;
+            try
+            {
+                using var response = await activityHttpClient.GetAsync(githubActivityList, HttpCompletionOption.ResponseHeadersRead, _windowLifetime.Token);
+                response.EnsureSuccessStatusCode();
+                if (response.Content.Headers.ContentLength is long length && length > 2 * 1024 * 1024)
+                    throw new InvalidDataException("The activity catalog is larger than expected.");
+
+                string content = await response.Content.ReadAsStringAsync(_windowLifetime.Token);
+                if (content.Length > 2 * 1024 * 1024)
+                    throw new InvalidDataException("The activity catalog is larger than expected.");
+                return (ParseActivities(content), false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidDataException)
+            {
+                onlineError = ex;
+            }
+
+            using Stream? bundledStream = typeof(MainWindow).Assembly.GetManifestResourceStream("DiscordActivityMockV2.ActivityList.json");
+            if (bundledStream == null)
+                throw new IOException("Could not download the catalog and no bundled catalog is available.", onlineError);
+
+            using var reader = new StreamReader(bundledStream);
+            return (ParseActivities(await reader.ReadToEndAsync(_windowLifetime.Token)), true);
+        }
+
+        private static ActivityItem[] ParseActivities(string json)
+        {
+            var activities = JsonSerializer.Deserialize(json, AppJsonContext.Default.ActivityItemArray)
+                             ?? throw new JsonException("The activity catalog is empty.");
+
+            var validActivities = new List<ActivityItem>();
+            foreach (var activity in activities)
+            {
+                if (activity == null || string.IsNullOrWhiteSpace(activity.name) ||
+                    string.IsNullOrWhiteSpace(activity.folder) || string.IsNullOrWhiteSpace(activity.exe))
+                    continue;
+
+                try
+                {
+                    activity.name = activity.name.Trim();
+                    activity.folder = activity.folder.Trim();
+                    activity.exe = activity.exe.Trim();
+                    ResolveChildPath(Path.GetTempPath(), activity.folder);
+                    NormalizeExecutableName(activity.exe);
+                    if (activity.steamManifest != null)
+                        SteamManifestSupport.Validate(activity.steamManifest, activity.folder);
+                    validActivities.Add(activity);
+                }
+                catch (ArgumentException)
+                {
+                    // Ignore malformed entries from the remote catalog.
+                }
+            }
+
+            var uniqueActivities = validActivities
+                .GroupBy(activity => activity.name, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(activity => activity.name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (uniqueActivities.Length == 0)
+                throw new JsonException("The activity catalog did not contain any valid entries.");
+            return uniqueActivities;
+        }
+
+        private void ApplyActivities(ActivityItem[] activities)
+        {
+            _downloadedActivities = activities;
+            PopulateActivityList(ActivitySearchBox.Text);
+            ActivitySearchBox.IsEnabled = !_isActivityRunning;
+        }
+
+        private void PopulateActivityList(string? searchFilter = null, bool resetSelectionWhenSearchCleared = false)
         {
             if (_downloadedActivities == null) return;
 
+            string previousSelection = ActivityListCombo.SelectedItem?.ToString() ?? "";
+            string normalizedSearch = searchFilter?.Trim() ?? "";
+
             ActivityListCombo.Items.Clear();
-            
-            var filteredActivities = _downloadedActivities.AsEnumerable();
-            
-            if (!string.IsNullOrWhiteSpace(searchFilter))
-            {
-                filteredActivities = filteredActivities.Where(a => 
-                    a.name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase));
-            }
-            
+
+            ActivityItem[] filteredActivities = string.IsNullOrWhiteSpace(normalizedSearch)
+                ? _downloadedActivities
+                : _downloadedActivities.Where(activity =>
+                    activity.name.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)).ToArray();
+
             foreach (var activity in filteredActivities)
             {
                 ActivityListCombo.Items.Add(activity.name);
             }
-            
+
             // Always add Custom Activity at the end
             ActivityListCombo.Items.Add("Custom Activity");
-            
-            if (ActivityListCombo.Items.Count > 0)
+
+            string selection = "Custom Activity";
+            if (!string.IsNullOrWhiteSpace(normalizedSearch) && filteredActivities.Length > 0)
             {
-                ActivityListCombo.SelectedIndex = 0;
+                ActivityItem closestMatch = filteredActivities.FirstOrDefault(activity =>
+                    string.Equals(activity.name, normalizedSearch, StringComparison.OrdinalIgnoreCase))
+                    ?? filteredActivities.FirstOrDefault(activity =>
+                        activity.name.StartsWith(normalizedSearch, StringComparison.OrdinalIgnoreCase))
+                    ?? filteredActivities[0];
+                selection = closestMatch.name;
             }
+            else if (string.IsNullOrWhiteSpace(normalizedSearch) && !resetSelectionWhenSearchCleared &&
+                     ActivityListCombo.Items.Contains(previousSelection))
+            {
+                selection = previousSelection;
+            }
+
+            ActivityListCombo.SelectedItem = selection;
         }
 
         private void ActivitySearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            PopulateActivityList(ActivitySearchBox.Text);
+            if (_isActivityRunning || _isStarting)
+                return;
+            PopulateActivityList(ActivitySearchBox.Text, resetSelectionWhenSearchCleared: true);
         }
 
         #endregion
@@ -879,182 +1278,239 @@ namespace DiscordActivityMockV2
 
         private async void StartActivityBtn_Click(object sender, RoutedEventArgs e)
         {
-            // Show warning dialog if not disabled
-            if (!_dontShowStartWarning)
-            {
-                var result = await ShowStartWarningDialog();
-                if (!result)
-                    return;
-            }
-            
-            string targetFolderName = FolderNameTxt.Text.Trim();
-            string targetExeName = FileExeTxt.Text.Trim();
-
-            if (string.IsNullOrEmpty(targetFolderName) || string.IsNullOrEmpty(targetExeName))
-            {
-                await ShowDialogAsync("Error", "Please enter both folder name and executable name.");
+            if (_isStarting || _isActivityRunning)
                 return;
-            }
 
-            // Check if we need to reset (different activity selected)
-            bool needsReset = !string.IsNullOrEmpty(_lastFolderName) && 
-                              (_lastFolderName != targetFolderName || _lastExeName != targetExeName);
-
-            if (needsReset)
-            {
-                if (!ResetToOriginal())
-                {
-                    await ShowDialogAsync("Error", "Failed to reset WordPad files. Please reload WordPad.");
-                    return;
-                }
-            }
-
-            if (string.IsNullOrEmpty(_currentExePath) || !File.Exists(_currentExePath))
-            {
-                await ShowDialogAsync("Error", "Executable not found. Please copy WordPad again.");
-                return;
-            }
-
-            if (string.IsNullOrEmpty(_currentFolderPath) || !Directory.Exists(_currentFolderPath))
-            {
-                await ShowDialogAsync("Error", "Folder not found. Please copy WordPad again.");
-                return;
-            }
-
+            _isStarting = true;
+            UpdateActivityControls();
             try
             {
-                StartActivityBtn.IsEnabled = false;
-                
-                string parentDir = Path.GetDirectoryName(_currentFolderPath)!;
-                string newFolderPath = Path.Combine(parentDir, targetFolderName);
-                string currentExeName = Path.GetFileNameWithoutExtension(_currentExePath);
+                if (!_dontShowStartWarning && !await ShowStartWarningDialog())
+                    return;
 
-                // Clean up any existing folder with the target name (from previous runs)
-                if (Directory.Exists(newFolderPath) && newFolderPath != _currentFolderPath)
+                ActivityItem? selectedActivity = GetSelectedActivityItem();
+                SteamManifestItem? steamManifest = selectedActivity?.steamManifest;
+                if (steamManifest != null && !await ConfirmSteamManifestSetupAsync(steamManifest))
+                    return;
+
+                if (string.IsNullOrEmpty(_workingRootPath) || string.IsNullOrEmpty(_currentExePath) ||
+                    string.IsNullOrEmpty(_currentFolderPath) || !File.Exists(_currentExePath) || !Directory.Exists(_currentFolderPath))
                 {
-                    try
-                    {
-                        Directory.Delete(newFolderPath, true);
-                    }
-                    catch
-                    {
-                        // If can't delete, use unique name
-                        newFolderPath = Path.Combine(parentDir, targetFolderName + "_" + Guid.NewGuid().ToString("N")[..4]);
-                    }
+                    await ShowDialogAsync("WordPad required", "Prepare a valid WordPad copy before starting an activity.");
+                    return;
                 }
 
-                // Rename the executable file if needed
-                if (!currentExeName.Equals(targetExeName, StringComparison.OrdinalIgnoreCase))
+                string targetFolderName = FolderNameTxt.Text.Trim();
+                string targetExeName;
+                string newFolderPath;
+                try
                 {
-                    string newExePath = Path.Combine(Path.GetDirectoryName(_currentExePath)!, targetExeName + ".exe");
-                    
-                    // Delete existing file if present
-                    if (File.Exists(newExePath))
+                    targetExeName = NormalizeExecutableName(FileExeTxt.Text);
+                    newFolderPath = ResolveChildPath(_workingRootPath, targetFolderName);
+                    if (steamManifest != null)
                     {
-                        File.Delete(newExePath);
+                        SteamManifestSupport.Validate(steamManifest, targetFolderName);
+                        string catalogExeName = NormalizeExecutableName(selectedActivity!.exe);
+                        if (!string.Equals(targetExeName, catalogExeName, StringComparison.OrdinalIgnoreCase))
+                            throw new ArgumentException("The executable name for a Steam manifest activity must match its catalog entry.");
                     }
-                    
-                    File.Move(_currentExePath, newExePath);
-                    _currentExePath = newExePath;
+                }
+                catch (ArgumentException ex)
+                {
+                    await ShowDialogAsync("Invalid activity", ex.Message);
+                    return;
                 }
 
-                // Rename the folder if needed
-                string currentFolderName = Path.GetFileName(_currentFolderPath);
-                if (!currentFolderName.Equals(targetFolderName, StringComparison.OrdinalIgnoreCase) && 
-                    _currentFolderPath != newFolderPath)
+                string normalizedFolderName = Path.GetRelativePath(_workingRootPath, newFolderPath);
+                bool needsReset = !string.IsNullOrEmpty(_lastFolderName) &&
+                                  (!string.Equals(_lastFolderName, normalizedFolderName, StringComparison.OrdinalIgnoreCase) ||
+                                   !string.Equals(_lastExeName, targetExeName, StringComparison.OrdinalIgnoreCase));
+                if (needsReset && !ResetToOriginal())
                 {
-                    Directory.Move(_currentFolderPath, newFolderPath);
-                    _currentFolderPath = newFolderPath;
-                    _currentExePath = Path.Combine(newFolderPath, Path.GetFileName(_currentExePath));
+                    await ShowDialogAsync("Setup error", "Could not restore the isolated WordPad copy. Reload the WordPad source and try again.");
+                    return;
                 }
 
-                // Store last used names
-                _lastFolderName = targetFolderName;
-                _lastExeName = targetExeName;
+                if (!IsPathWithin(_workingRootPath, _currentFolderPath))
+                    throw new InvalidOperationException("The current working folder is outside the private session directory.");
 
-                // Start the process hidden
-                var processInfo = new ProcessStartInfo
+                string activityExePath;
+                string activityWorkingDirectory;
+                if (steamManifest != null)
                 {
-                    FileName = _currentExePath,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-
-                _runningProcess = Process.Start(processInfo);
-                
-                if (_runningProcess != null)
-                {
-                    _isActivityRunning = true;
-                    
-                    // Hide the WordPad window if enabled
-                    if (_hideEnabled)
-                    {
-                        int delaySeconds = _hideDelaySeconds;
-                        _ = Task.Run(async () =>
-                        {
-                            // Wait configured seconds for Discord to detect the activity before hiding
-                            await Task.Delay(delaySeconds * 1000);
-                            try
-                            {
-                                if (_runningProcess != null && !_runningProcess.HasExited)
-                                {
-                                    IntPtr hwnd = _runningProcess.MainWindowHandle;
-                                    if (hwnd != IntPtr.Zero)
-                                    {
-                                        ShowWindow(hwnd, SW_HIDE);
-                                    }
-                                }
-                            }
-                            catch { }
-                        });
-                    }
-
-                    // Monitor process exit
-                    _runningProcess.EnableRaisingEvents = true;
-                    _runningProcess.Exited += (s, args) =>
-                    {
-                        DispatcherQueue.TryEnqueue(() =>
-                        {
-                            _isActivityRunning = false;
-                            _activityTimer?.Stop();
-                            _autoStopTimer?.Stop();
-                            UpdateActivityControls();
-                        });
-                    };
-                    
-                    // Start the timer
-                    _activityStartTime = DateTime.Now;
-                    _activityTimer?.Start();
-                    
-                    // Start auto-stop timer if enabled
-                    if (_autoStopEnabled && _autoStopTimer != null)
-                    {
-                        _autoStopTimer.Interval = TimeSpan.FromMinutes(_autoStopMinutes);
-                        _autoStopTimer.Start();
-                    }
-
-                    UpdateActivityControls();
+                    SteamManifestLaunch steamLaunch = SteamManifestSupport.Prepare(
+                        steamManifest,
+                        _currentFolderPath,
+                        _currentExePath,
+                        targetExeName);
+                    activityExePath = steamLaunch.ExecutablePath;
+                    activityWorkingDirectory = steamLaunch.WorkingDirectory;
+                    WordPadStatusBar.Severity = InfoBarSeverity.Success;
+                    WordPadStatusBar.Message = "Steam manifest ready";
                 }
                 else
                 {
-                    await ShowDialogAsync("Error", "Failed to start the process.");
-                    StartActivityBtn.IsEnabled = true;
+                    string currentExeName = Path.GetFileNameWithoutExtension(_currentExePath);
+                    string currentExeDirectory = Path.GetDirectoryName(_currentExePath)!;
+                    if (!currentExeName.Equals(targetExeName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string newExePath = Path.Combine(currentExeDirectory, targetExeName + ".exe");
+                        if (File.Exists(newExePath))
+                            throw new IOException("The target executable already exists in this isolated working folder.");
+                        File.Move(_currentExePath, newExePath);
+                        _currentExePath = newExePath;
+                    }
+
+                    string currentFolderPath = Path.GetFullPath(_currentFolderPath);
+                    if (!string.Equals(currentFolderPath, newFolderPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (Directory.Exists(newFolderPath) || File.Exists(newFolderPath))
+                            throw new IOException("The requested activity folder already exists in the private session directory.");
+
+                        if (newFolderPath.StartsWith(currentFolderPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                            throw new ArgumentException("The activity folder cannot be inside the temporary WordPad folder.");
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(newFolderPath)!);
+                        Directory.Move(_currentFolderPath, newFolderPath);
+                        _currentFolderPath = newFolderPath;
+                        _currentExePath = Path.Combine(newFolderPath, Path.GetFileName(_currentExePath));
+                    }
+
+                    activityExePath = _currentExePath;
+                    activityWorkingDirectory = _currentFolderPath;
                 }
+
+                _lastFolderName = normalizedFolderName;
+                _lastExeName = targetExeName;
+
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = activityExePath,
+                    WorkingDirectory = activityWorkingDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = false,
+                    WindowStyle = ProcessWindowStyle.Normal
+                };
+
+                var process = new Process { StartInfo = processInfo };
+                long sessionId = ++_activitySessionId;
+                process.Exited += (_, _) => DispatcherQueue.TryEnqueue(() => HandleProcessExited(process, sessionId));
+                if (!process.Start())
+                {
+                    process.Dispose();
+                    throw new InvalidOperationException("Windows did not start the activity process.");
+                }
+
+                _runningProcess = process;
+                _isActivityRunning = true;
+                process.EnableRaisingEvents = true;
+
+                _hideCancellation?.Cancel();
+                _hideCancellation?.Dispose();
+                _hideCancellation = new CancellationTokenSource();
+                if (_hideEnabled)
+                    _ = HideProcessAfterDelayAsync(process, sessionId, _hideDelaySeconds, _hideCancellation.Token);
+
+                _activityStartTime = DateTime.Now;
+                _activityTimer?.Start();
+                if (_autoStopEnabled && _autoStopTimer != null)
+                {
+                    _autoStopTimer.Interval = TimeSpan.FromMinutes(_autoStopMinutes);
+                    _autoStopTimer.Start();
+                }
+
+                UpdateActivityControls();
+                if (process.HasExited)
+                    DispatcherQueue.TryEnqueue(() => HandleProcessExited(process, sessionId));
             }
             catch (Exception ex)
             {
-                await ShowDialogAsync("Error", $"Error during activity setup: {ex.Message}");
-                StartActivityBtn.IsEnabled = true;
+                AppLog.Error("Start activity", ex);
+                bool stopped = !_isActivityRunning || StopRunningProcess();
+                if (stopped)
+                {
+                    _activityTimer?.Stop();
+                    _autoStopTimer?.Stop();
+                    TimerText.Text = "00:00:00";
+                    ResetToOriginal();
+                }
+                else
+                {
+                    WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                    WordPadStatusBar.Message = "Windows could not stop the partially started process.";
+                }
+                await ShowDialogAsync("Could not start activity", ex.Message);
+            }
+            finally
+            {
+                _isStarting = false;
+                UpdateActivityControls();
+            }
+        }
+
+        private void HandleProcessExited(Process process, long sessionId)
+        {
+            if (sessionId != _activitySessionId || !ReferenceEquals(_runningProcess, process))
+                return;
+
+            _runningProcess = null;
+            _isActivityRunning = false;
+            _hideCancellation?.Cancel();
+            _hideCancellation?.Dispose();
+            _hideCancellation = null;
+            _activityTimer?.Stop();
+            _autoStopTimer?.Stop();
+            process.Dispose();
+            UpdateActivityControls();
+        }
+
+        private async Task HideProcessAfterDelayAsync(Process process, long sessionId, int delaySeconds, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken);
+                DateTime retryUntil = DateTime.UtcNow.AddSeconds(5);
+                while (DateTime.UtcNow <= retryUntil && !cancellationToken.IsCancellationRequested)
+                {
+                    if (process.HasExited)
+                        return;
+
+                    process.Refresh();
+                    IntPtr processWindow = process.MainWindowHandle;
+                    if (processWindow != IntPtr.Zero)
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (sessionId == _activitySessionId && ReferenceEquals(_runningProcess, process) &&
+                                !cancellationToken.IsCancellationRequested && !process.HasExited)
+                                ShowWindow(processWindow, SW_HIDE);
+                        });
+                        return;
+                    }
+
+                    await Task.Delay(250, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Hide WordPad window", ex);
             }
         }
 
         private void StopActivityBtn_Click(object sender, RoutedEventArgs e)
         {
-            StopRunningProcess();
-            _activityTimer?.Stop();
-            _autoStopTimer?.Stop();
-            TimerText.Text = "00:00:00";
+            if (StopRunningProcess())
+            {
+                _activityTimer?.Stop();
+                _autoStopTimer?.Stop();
+                TimerText.Text = "00:00:00";
+            }
+            else
+            {
+                WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                WordPadStatusBar.Message = "Windows could not stop the activity process. Try again.";
+            }
             UpdateActivityControls();
         }
         
@@ -1092,9 +1548,9 @@ namespace DiscordActivityMockV2
         
         private void AutoStopMinutes_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
         {
-            if (!double.IsNaN(args.NewValue))
+            if (double.IsFinite(args.NewValue))
             {
-                _autoStopMinutes = (int)args.NewValue;
+                _autoStopMinutes = (int)Math.Clamp(args.NewValue, 1, 1440);
             }
             UpdateTimerStatusText();
             SaveSettings();
@@ -1123,9 +1579,9 @@ namespace DiscordActivityMockV2
         
         private void HideDelaySeconds_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
         {
-            if (!double.IsNaN(args.NewValue))
+            if (double.IsFinite(args.NewValue))
             {
-                _hideDelaySeconds = (int)args.NewValue;
+                _hideDelaySeconds = (int)Math.Clamp(args.NewValue, 1, 60);
             }
             UpdateHideStatusText();
             SaveSettings();
@@ -1174,7 +1630,7 @@ namespace DiscordActivityMockV2
                 XamlRoot = this.Content.XamlRoot,
                 RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
-            await dialog.ShowAsync();
+            await ShowContentDialogAsync(dialog);
         }
 
         private void OpenUrl(string url)
@@ -1187,7 +1643,10 @@ namespace DiscordActivityMockV2
                     UseShellExecute = true
                 });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Open external URL", ex);
+            }
         }
 
         #endregion

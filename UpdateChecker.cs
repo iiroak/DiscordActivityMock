@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -36,9 +37,9 @@ namespace DiscordActivityMockV2
 
     public static class UpdateChecker
     {
-        private const string CurrentVersion = "2.0.0";
+        private const string CurrentVersion = "2.1.0";
         private const string GitHubApiUrl = "https://api.github.com/repos/iiroak/DiscordActivityMock/releases/latest";
-        private static readonly HttpClient _httpClient = new();
+        private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
         static UpdateChecker()
         {
@@ -69,8 +70,8 @@ namespace DiscordActivityMockV2
                     
                     foreach (var asset in release.Assets)
                     {
-                        if (asset.Name.Contains(platform, StringComparison.OrdinalIgnoreCase) && 
-                            asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        if (asset.Name.Contains($"win-{platform}", StringComparison.OrdinalIgnoreCase) &&
+                            asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                         {
                             downloadUrl = asset.DownloadUrl;
                             break;
@@ -82,34 +83,36 @@ namespace DiscordActivityMockV2
 
                 return (false, null, null, null);
             }
-            catch
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
+                // A repository without a published release has nothing to update to.
+                return (false, null, null, null);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Check for updates", ex);
                 return (false, null, null, null);
             }
         }
 
         private static string GetPlatform()
         {
-            return Environment.Is64BitOperatingSystem ? "x64" : "x86";
+            return RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => "x64",
+                Architecture.X86 => "x86",
+                Architecture.Arm64 => "arm64",
+                _ => "unsupported"
+            };
         }
 
         private static bool IsNewerVersion(string latest, string current)
         {
             try
             {
-                var latestParts = latest.Split('.');
-                var currentParts = current.Split('.');
-
-                for (int i = 0; i < Math.Max(latestParts.Length, currentParts.Length); i++)
-                {
-                    int latestNum = i < latestParts.Length ? int.Parse(latestParts[i]) : 0;
-                    int currentNum = i < currentParts.Length ? int.Parse(currentParts[i]) : 0;
-
-                    if (latestNum > currentNum) return true;
-                    if (latestNum < currentNum) return false;
-                }
-
-                return false;
+                return Version.TryParse(NormalizeVersion(latest), out var latestVersion) &&
+                       Version.TryParse(NormalizeVersion(current), out var currentVersion) &&
+                       latestVersion > currentVersion;
             }
             catch
             {
@@ -117,33 +120,58 @@ namespace DiscordActivityMockV2
             }
         }
 
+        private static string NormalizeVersion(string value)
+        {
+            string[] parts = value.Split('.');
+            return parts.Length switch
+            {
+                1 => value + ".0.0",
+                2 => value + ".0",
+                _ => value
+            };
+        }
+
         public static void OpenReleasePage(string url)
         {
             try
             {
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+                    !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+                    return;
+
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = url,
+                    FileName = uri.AbsoluteUri,
                     UseShellExecute = true
                 });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Error("Open release page", ex);
+            }
         }
 
         public static async Task<string?> DownloadUpdateAsync(string downloadUrl, IProgress<double>? progress = null)
         {
+            string? tempPath = null;
             try
             {
-                var tempPath = Path.Combine(Path.GetTempPath(), "DiscordActivityMock_Update.zip");
+                if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+                    !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                tempPath = Path.Combine(Path.GetTempPath(), $"DiscordActivityMock_Update_{Guid.NewGuid():N}.exe");
                 
-                using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
 
                 var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+                if (totalBytes > 500L * 1024 * 1024)
+                    return null;
                 var canReportProgress = totalBytes != -1 && progress != null;
 
                 using var contentStream = await response.Content.ReadAsStreamAsync();
-                using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+                using var fileStream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 8192, true);
 
                 var buffer = new byte[8192];
                 long totalRead = 0;
@@ -151,8 +179,11 @@ namespace DiscordActivityMockV2
 
                 while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) != 0)
                 {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead);
                     totalRead += bytesRead;
+                    if (totalRead > 500L * 1024 * 1024)
+                        throw new InvalidDataException("The update executable exceeds the allowed download size.");
+
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
 
                     if (canReportProgress)
                     {
@@ -162,8 +193,13 @@ namespace DiscordActivityMockV2
 
                 return tempPath;
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Error("Download update", ex);
+                if (tempPath != null && File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { }
+                }
                 return null;
             }
         }
