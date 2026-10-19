@@ -6,12 +6,12 @@
     },
     {
         "name": "Genshin Impact",
-        "folder": "Genshin Impact game",
-        "exe": "GenshinImpact.exe"
+        "folder": "Genshin Impact/Genshin Impact game",
+        "exe": "GenshinImpact"
     },
     {
         "name": "Lost Ark",
-        "folder": "Win64",
+        "folder": "Lost Ark/Binaries/Win64",
         "exe": "LOSTARK"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
         "name": "Grand Theft Auto V",
-        "folder": "Win64",
+        "folder": "Grand Theft Auto V",
         "exe": "GTA5"
     },
     {
@@ -41,8 +41,8 @@
     },
     {
         "name": "The Sims 4",
-        "folder": "Win64",
-        "exe": "TS4"
+        "folder": "The Sims 4/Game/Bin",
+        "exe": "TS4_x64"
     },
     {
         "name": "Starlight ReVolver",
@@ -71,13 +71,13 @@
     },
     {
         "name": "Delta Force",
-        "folder": "Win64",
-        "exe": "deltaforceclient-Win64-Shipping"
+        "folder": "Delta Force/Game/DeltaForce/Binaries/Win64",
+        "exe": "DeltaForceClient-Win64-Shipping"
     },
     {
         "name": "Comet AI",
         "folder": "Perplexity/Comet/Application",
-        "exe": "Comet"
+        "exe": "comet"
     },
     {
         "name": "PVZ Replanted",
@@ -86,7 +86,412 @@
     },
     {
         "name": "Terminull Brigade",
+        "folder": "TerminullBrigade/Project Rogueteers/Rogueteers/Binaries/Win64",
+        "exe": "Rouge-Win64-Shipping"
+    },
+    {
+        "name": "AION 2",
+        "folder": "AION 2",
+        "exe": "AION2"
+    },
+    {
+        "name": "Albion Online",
+        "folder": "game",
+        "exe": "Albion-Online"
+    },
+    {
+        "name": "Aniimo",
+        "folder": "Aniimo",
+        "exe": "Aniimo"
+    },
+    {
+        "name": "Apex Legends",
+        "folder": "Apex Legends",
+        "exe": "r5apex"
+    },
+    {
+        "name": "Breakout Arena / Arena Breakout Infinite",
+        "folder": "ABInfinite/Binaries/Win64",
+        "exe": "UAGame"
+    },
+    {
+        "name": "Arknights: Endfield",
+        "folder": "EndField Game",
+        "exe": "Endfield"
+    },
+    {
+        "name": "Assassin's Creed: Black Flag Resynced",
+        "folder": "Assassin's Creed Black Flag Resynced",
+        "exe": "ACBlackFlag"
+    },
+    {
+        "name": "Battlefield 6",
+        "folder": "Battlefield 6",
+        "exe": "bf6"
+    },
+    {
+        "name": "Call of Duty: Modern Warfare 4",
+        "folder": "Call of Duty Modern Warfare IV",
+        "exe": "cod26-cod"
+    },
+    {
+        "name": "Clive Barker's Hellraiser: Revival",
+        "folder": "win64",
+        "exe": "hellraiser-win64-shipping"
+    },
+    {
+        "name": "Deadzone Rogue 2",
         "folder": "Win64",
-        "exe": "M1-Win64-Shipping"
+        "exe": "deadzone2steam"
+    },
+    {
+        "name": "Destiny 2",
+        "folder": "Destiny 2",
+        "exe": "destiny2"
+    },
+    {
+        "name": "Dragon Age: The Veilguard",
+        "folder": "Dragon Age The Veilguard",
+        "exe": "DragonAgeTheVeilguard"
+    },
+    {
+        "name": "Dragon's Dogma 2",
+        "folder": "Dragons Dogma 2",
+        "exe": "DD2"
+    },
+    {
+        "name": "Dragonstride: Legacy Reborn",
+        "folder": "Dragonheir Silent Gods",
+        "exe": "Dragonheir"
+    },
+    {
+        "name": "Duet Night Abyss",
+        "folder": "Duet Night Abyss/EM/Binaries/Win64",
+        "exe": "EM-Win64-Shipping"
+    },
+    {
+        "name": "EA SPORTS FC 26",
+        "folder": "EA SPORTS FC 26",
+        "exe": "FC26"
+    },
+    {
+        "name": "EA SPORTS FC 27",
+        "folder": "EA SPORTS FC 27",
+        "exe": "fc27"
+    },
+    {
+        "name": "EMPULSE",
+        "folder": "EMPULSE Demo/Orion/Binaries/Win64",
+        "exe": "OrionClient-Win64-Shipping"
+    },
+    {
+        "name": "Escape the Backrooms",
+        "folder": "EscapeTheBackrooms/Binaries/Win64",
+        "exe": "Backrooms-Win64-Shipping"
+    },
+    {
+        "name": "EVE Online",
+        "folder": "Eve Online",
+        "exe": "exefile"
+    },
+    {
+        "name": "Fallout 4",
+        "folder": "Fallout 4",
+        "exe": "Fallout4"
+    },
+    {
+        "name": "Fallout 76",
+        "folder": "Fallout 76",
+        "exe": "Fallout76"
+    },
+    {
+        "name": "Forza Horizon 6",
+        "folder": "XboxGames/Forza Horizon 6/Content",
+        "exe": "forzahorizon6"
+    },
+    {
+        "name": "GOALS",
+        "folder": "GOALS/Game/Binaries/Win64",
+        "exe": "Goals"
+    },
+    {
+        "name": "Goddess of Victory: NIKKE",
+        "folder": "NIKKE/NIKKE/Game",
+        "exe": "nikke"
+    },
+    {
+        "name": "Gravebound",
+        "folder": "Gravebound",
+        "exe": "Gravebound"
+    },
+    {
+        "name": "Grounded 2",
+        "folder": "Grounded 2/WinGRTS",
+        "exe": "Grounded2-WinGRTS-Shipping"
+    },
+    {
+        "name": "Helldivers 2",
+        "folder": "Helldivers 2/bin",
+        "exe": "helldivers2"
+    },
+    {
+        "name": "Highguard",
+        "folder": "Highguard/Binaries/Win64",
+        "exe": "HighguardClient-Win64-Shipping"
+    },
+    {
+        "name": "Honkai: Star Rail",
+        "folder": "Games",
+        "exe": "StarRail"
+    },
+    {
+        "name": "Horizon Forbidden West",
+        "folder": "Horizon Forbidden West Complete Edition",
+        "exe": "HorizonForbiddenWest"
+    },
+    {
+        "name": "Hunt: Showdown 1896",
+        "folder": "win_x64",
+        "exe": "HuntGame"
+    },
+    {
+        "name": "John Carpenter's Toxic Commando",
+        "folder": "client_pc/root/bin/pc",
+        "exe": "John Carpenter's Toxic Commando"
+    },
+    {
+        "name": "Kritika Open Beta",
+        "folder": "Win64",
+        "exe": "jf"
+    },
+    {
+        "name": "League of Legends",
+        "folder": "Game",
+        "exe": "League of Legends"
+    },
+    {
+        "name": "Marathon (Server Slam)",
+        "folder": "Marathon Server Slam",
+        "exe": "Marathon"
+    },
+    {
+        "name": "March of Giants",
+        "folder": "March of Giants",
+        "exe": "TheLineClient"
+    },
+    {
+        "name": "Marvel Rivals",
+        "folder": "MarvelRivals/MarvelGame/Marvel/Binaries/Win64",
+        "exe": "Marvel-Win64-Shipping"
+    },
+    {
+        "name": "Marvel Snap",
+        "folder": "marvel snap",
+        "exe": "snap"
+    },
+    {
+        "name": "Marvel Tōkon: Fighting Souls",
+        "folder": "MTFS/Binaries/Win64",
+        "exe": "MTFSSteam-Win64-Shipping"
+    },
+    {
+        "name": "Monster Hunter Stories",
+        "folder": "Monster Hunter Stories",
+        "exe": "MHST"
+    },
+    {
+        "name": "Monster Hunter Wilds",
+        "folder": "MonsterHunterWilds",
+        "exe": "MonsterHunterWilds"
+    },
+    {
+        "name": "NBA 2K27",
+        "folder": "NBA 2K27",
+        "exe": "NBA2K27"
+    },
+    {
+        "name": "NTE: Neverness to Everness",
+        "folder": "Neverness To Everness/Client/WindowsNoEditor/HT/Binaries/Win64",
+        "exe": "HTGame"
+    },
+    {
+        "name": "Old School RuneScape",
+        "folder": "Old School RuneScape/bin/win64",
+        "exe": "osclient"
+    },
+    {
+        "name": "Once Human",
+        "folder": "Once Human",
+        "exe": "ONCE_HUMAN"
+    },
+    {
+        "name": "Onimusha: Way of the Sword",
+        "folder": "OnimushaWotS_Demo",
+        "exe": "OnimushaWotS_Demo"
+    },
+    {
+        "name": "Opera GX",
+        "folder": "Opera GX",
+        "exe": "opera"
+    },
+    {
+        "name": "Path of Exile 2",
+        "folder": "Path of Exile 2",
+        "exe": "pathofexile"
+    },
+    {
+        "name": "Pragmata",
+        "folder": "PRAGMATA SKETCHBOOK",
+        "exe": "PRAGMATA_SKETCHBOOK"
+    },
+    {
+        "name": "PUBG: Battlegrounds",
+        "folder": "Win64",
+        "exe": "TslGame"
+    },
+    {
+        "name": "Ragnarok: The New World",
+        "folder": "Ragnarok The New World/v7/roworld",
+        "exe": "game"
+    },
+    {
+        "name": "RAID: Shadow Legends",
+        "folder": "build",
+        "exe": "Raid"
+    },
+    {
+        "name": "2XKO",
+        "folder": "2XKO/Live/Lion/Binaries/Win64",
+        "exe": "Lion-Win64-Shipping"
+    },
+    {
+        "name": "Resident Evil Village",
+        "folder": "Resident Evil Village BIOHAZARD VILLAGE",
+        "exe": "re8"
+    },
+    {
+        "name": "Risk of Rain 2",
+        "folder": "Risk of Rain 2",
+        "exe": "Risk of Rain 2"
+    },
+    {
+        "name": "Roblox",
+        "folder": "Roblox",
+        "exe": "RobloxPlayerBeta"
+    },
+    {
+        "name": "Rocket League",
+        "folder": "rocketleague/Binaries/Win64",
+        "exe": "RocketLeague"
+    },
+    {
+        "name": "Rune Dice",
+        "folder": "Rune Dice",
+        "exe": "Rune Dice"
+    },
+    {
+        "name": "RuneScape",
+        "folder": "win64",
+        "exe": "runescape"
+    },
+    {
+        "name": "RuneScape: Dragonwilds",
+        "folder": "RuneScape Dragonwilds",
+        "exe": "RSDragonwilds"
+    },
+    {
+        "name": "Shift at Midnight",
+        "folder": "Shift At Midnight Demo",
+        "exe": "ShiftAtMidnight"
+    },
+    {
+        "name": "STALZONE",
+        "folder": "bin",
+        "exe": "stalcraftw"
+    },
+    {
+        "name": "Storm Lancers",
+        "folder": "Storm Lancers Demo",
+        "exe": "StormLancersDemo"
+    },
+    {
+        "name": "Summoners War",
+        "folder": "Summoners War",
+        "exe": "SummonersWar"
+    },
+    {
+        "name": "The Finals",
+        "folder": "The Finals",
+        "exe": "Discovery"
+    },
+    {
+        "name": "The Mound: Omen of Cthulhu",
+        "folder": "The Mound Omen of Cthulhu/Binaries/Win64",
+        "exe": "TheMound-Win64-Shipping"
+    },
+    {
+        "name": "Torchlight: Infinite",
+        "folder": "UE_game/Binaries/Win64",
+        "exe": "Torchlight_Infinite"
+    },
+    {
+        "name": "Umamusume: Pretty Derby",
+        "folder": "UmamusumePrettyDerby",
+        "exe": "UmamusumePrettyDerby"
+    },
+    {
+        "name": "VALORANT",
+        "folder": "Riot Games/VALORANT/live/ShooterGame/Binaries/Win64",
+        "exe": "VALORANT-Win64-Shipping"
+    },
+    {
+        "name": "Vindictus",
+        "folder": "Vindictus",
+        "exe": "Vindictus_x64"
+    },
+    {
+        "name": "Warframe",
+        "folder": "Warframe",
+        "exe": "Warframe"
+    },
+    {
+        "name": "Where Winds Meet",
+        "folder": "Where Winds Meet/Engine/Binaries/Win64r",
+        "exe": "wwm"
+    },
+    {
+        "name": "Wizard101",
+        "folder": "Wizard101",
+        "exe": "Wizard101"
+    },
+    {
+        "name": "World of Tanks: HEAT",
+        "folder": "WoT HEAT",
+        "exe": "wgcs_api"
+    },
+    {
+        "name": "World of Warcraft",
+        "folder": "World of Warcraft/_retail_",
+        "exe": "Wow"
+    },
+    {
+        "name": "Wuthering Waves",
+        "folder": "Wuthering Waves/Wuthering Waves Game/Client/Binaries/Win64",
+        "exe": "Client-Win64-Shipping"
+    },
+    {
+        "name": "Yu-Gi-Oh! Master Duel",
+        "folder": "Master Duel",
+        "exe": "masterduel"
+    },
+    {
+        "name": "Zenless Zone Zero",
+        "folder": "Zenless Zone Zero/games/ZenlessZoneZero Game",
+        "exe": "ZenlessZoneZero"
+    },
+    {
+        "name": "GearUP",
+        "folder": "GearUP",
+        "exe": "Gearup_ball"
     }
 ]
