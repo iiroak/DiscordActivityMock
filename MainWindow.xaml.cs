@@ -130,8 +130,8 @@ namespace DiscordActivityMockV2
             var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
             var workArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Primary).WorkArea;
-            int initialWidth = Math.Min(1447, Math.Max(900, workArea.Width - 32));
-            int initialHeight = Math.Min(599, Math.Max(440, workArea.Height - 32));
+            int initialWidth = Math.Min(1450, Math.Max(900, workArea.Width - 32));
+            int initialHeight = Math.Min(650, Math.Max(440, workArea.Height - 32));
             _appWindow.Resize(new SizeInt32(initialWidth, initialHeight));
             _appWindow.Move(new PointInt32(
                 workArea.X + Math.Max(0, (workArea.Width - initialWidth) / 2),
