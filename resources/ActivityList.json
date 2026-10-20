@@ -504,5 +504,10 @@
         "name": "Nekome",
         "folder": "Win64",
         "exe": "nekomedemo"
+    },
+    {
+        "name": "Nekome (Demo)",
+        "folder": "Nekome",
+        "exe": "nekomedemo"
     }
 ]
