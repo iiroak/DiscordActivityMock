@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Foundation;
 using Windows.Graphics;
 
 namespace DiscordActivityMockV2
@@ -162,6 +163,7 @@ namespace DiscordActivityMockV2
             // Initialize UI
             ActivityListCombo.Items.Add("Custom Activity");
             ActivityListCombo.SelectedIndex = 0;
+            RefreshActivityPopupItems();
             
             // Apply loaded settings to UI
             ApplyLoadedSettings();
@@ -345,6 +347,7 @@ namespace DiscordActivityMockV2
         private void ToggleStep2(bool enabled)
         {
             ActivityListCombo.IsEnabled = enabled;
+            ActivityListButton.IsEnabled = enabled;
             FetchActivitiesBtn.IsEnabled = enabled;
             ActivitySearchBox.IsEnabled = enabled && _downloadedActivities != null && _downloadedActivities.Length > 0;
             
@@ -386,6 +389,7 @@ namespace DiscordActivityMockV2
             FileExeTxt.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
             ClearBtn.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
             ActivityListCombo.IsEnabled = !_isActivityRunning && !_isStarting;
+            ActivityListButton.IsEnabled = !_isActivityRunning && !_isStarting;
             ActivitySearchBox.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
             FetchActivitiesBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
             WordPadSystemBtn.IsEnabled = !_isActivityRunning && !_isStarting;
@@ -1059,6 +1063,66 @@ namespace DiscordActivityMockV2
         private static string GetActivityDisplayName(ActivityItem activity) =>
             activity.steamManifest == null ? activity.name : $"{activity.name} (SteamApps)";
 
+        private void ActivityListButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ActivityListPopup.IsOpen)
+            {
+                ActivityListPopup.IsOpen = false;
+                return;
+            }
+
+            RefreshActivityPopupItems();
+            Point comboPosition = ActivityListCombo.TransformToVisual(RootGrid).TransformPoint(new Point(0, 0));
+            ActivityPopupList.Width = ActivityListCombo.ActualWidth;
+            double availableBelow = RootGrid.ActualHeight - comboPosition.Y - ActivityListCombo.ActualHeight - 4;
+            ActivityPopupList.Height = Math.Max(80, Math.Min(300, availableBelow - 6));
+            ActivityListPopup.IsOpen = true;
+            ActivityPopupList.Focus(FocusState.Programmatic);
+        }
+
+        private void RefreshActivityPopupItems()
+        {
+            string selected = ActivityListCombo.SelectedItem?.ToString() ?? "";
+            ActivityPopupList.Items.Clear();
+
+            foreach (object item in ActivityListCombo.Items)
+                ActivityPopupList.Items.Add(item?.ToString() ?? "");
+
+            ActivityPopupList.SelectedItem = selected;
+            if (ActivityListPopup.IsOpen && ActivityPopupList.SelectedItem != null)
+                ActivityPopupList.ScrollIntoView(ActivityPopupList.SelectedItem);
+        }
+
+        private void ActivityPopupList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            CommitActivityPopupSelection(e.ClickedItem?.ToString());
+        }
+
+        private void ActivityPopupList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                CommitActivityPopupSelection(ActivityPopupList.SelectedItem?.ToString());
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                ActivityListPopup.IsOpen = false;
+                ActivityListButton.Focus(FocusState.Programmatic);
+                e.Handled = true;
+            }
+        }
+
+        private void CommitActivityPopupSelection(string? selectedActivity)
+        {
+            if (string.IsNullOrEmpty(selectedActivity))
+                return;
+
+            ActivityListCombo.SelectedItem = selectedActivity;
+            ActivityListPopup.IsOpen = false;
+            ActivityListButton.Focus(FocusState.Programmatic);
+        }
+
         private async Task<bool> ConfirmSteamManifestSetupAsync(SteamManifestItem manifest)
         {
             var dialog = new ContentDialog
@@ -1246,6 +1310,7 @@ namespace DiscordActivityMockV2
             }
 
             ActivityListCombo.SelectedItem = selection;
+            RefreshActivityPopupItems();
         }
 
         private void ActivitySearchBox_TextChanged(object sender, TextChangedEventArgs e)
