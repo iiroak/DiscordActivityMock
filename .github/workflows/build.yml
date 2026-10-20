@@ -28,27 +28,18 @@ env:
 jobs:
   build:
     runs-on: windows-latest
-    
-    strategy:
-      matrix:
-        include:
-          - platform: x64
-            rid: win-x64
-          - platform: x86
-            rid: win-x86
-          - platform: ARM64
-            rid: win-arm64
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      
+
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
-        
+
     - name: Create global.json to pin SDK version
+      shell: pwsh
       run: |
         @"
         {
@@ -58,96 +49,75 @@ jobs:
           }
         }
         "@ | Out-File -FilePath global.json -Encoding utf8
-        
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
-      
-    - name: Restore dependencies
-      run: dotnet restore DiscordActivityMockV2.csproj -r ${{ matrix.rid }}
-      
-    - name: Build
+
+    - name: Restore x86 dependencies
+      run: dotnet restore DiscordActivityMockV2.csproj -r win-x86
+
+    - name: Build x86
+      run: dotnet build DiscordActivityMockV2.csproj -c Release -p:Platform=x86 -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86 --no-restore
+
+    - name: Publish standalone x86 executable
+      shell: pwsh
+      run: >-
+        dotnet publish DiscordActivityMockV2.csproj -c Release -r win-x86 -p:Platform=x86
+        -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86
+        -p:PublishReadyToRun=false -p:SelfContained=true -p:PublishSingleFile=true
+        -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true
+        -p:EnableCompressionInSingleFile=true -p:DebugSymbols=false -p:DebugType=None
+        --no-restore -o publish/win-x86
+
+    - name: Verify standalone executable
+      shell: pwsh
       run: |
-        dotnet build DiscordActivityMockV2.csproj -c Release -p:Platform=${{ matrix.platform }} -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-${{ matrix.rid }} --no-restore
-      
-    - name: Publish
-      run: |
-        # Bundle with its final version/architecture name; renaming a WinUI single-file executable after publishing breaks startup.
-        dotnet publish DiscordActivityMockV2.csproj -c Release -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }} -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-${{ matrix.rid }} -p:PublishReadyToRun=false -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugSymbols=false -p:DebugType=None -o publish/${{ matrix.rid }}
-      
-    - name: Upload artifact
+        $expectedExe = "DiscordActivityMock-${env:RELEASE_TAG}-win-x86.exe"
+        $exePath = Join-Path $env:GITHUB_WORKSPACE "publish\win-x86\$expectedExe"
+        if (!(Test-Path -LiteralPath $exePath)) { throw "Expected x86 executable was not published: $exePath" }
+
+    - name: Upload x86 executable
       uses: actions/upload-artifact@v4
       with:
-        name: DiscordActivityMock-${{ matrix.rid }}
-        path: publish/${{ matrix.rid }}/
-        
+        name: DiscordActivityMock-win-x86
+        path: publish/win-x86/*.exe
+        if-no-files-found: error
+
   release:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
     permissions:
       contents: write
-    
+
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
 
     - name: Validate manual release tag
       if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
-      shell: pwsh
       env:
         RELEASE_TAG: ${{ github.event.inputs.tag_name }}
       run: |
-        if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
-          throw 'A valid tag such as v2.1.0 is required for a manual release.'
-        }
-        git fetch --depth=1 origin "refs/tags/$env:RELEASE_TAG:refs/tags/$env:RELEASE_TAG"
-        $tagCommit = git rev-list -n 1 $env:RELEASE_TAG
-        if ($tagCommit -ne $env:GITHUB_SHA) {
-          throw 'The selected release tag must point to the exact commit that was built.'
-        }
+        if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "A valid tag such as v2.1.0 is required for a manual release." >&2
+          exit 1
+        fi
+        git fetch --depth=1 origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+        tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+        if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+          echo "The selected release tag must point to the exact commit that was built." >&2
+          exit 1
+        fi
 
-    - name: Download x64 artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: DiscordActivityMock-win-x64
-        path: artifacts/win-x64
-        
-    - name: Download x86 artifact
+    - name: Download x86 executable
       uses: actions/download-artifact@v4
       with:
         name: DiscordActivityMock-win-x86
-        path: artifacts/win-x86
-        
-    - name: Download arm64 artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: DiscordActivityMock-win-arm64
-        path: artifacts/win-arm64
-        
-    - name: Package standalone executables and ZIPs
-      shell: bash
-      run: |
-        set -euo pipefail
-        for arch in win-x64 win-x86 win-arm64; do
-          package="release-package/$arch"
-          exe="DiscordActivityMock-$RELEASE_TAG-$arch.exe"
-          mkdir -p "$package"
-          cp -R "artifacts/$arch/." "$package/"
-          cp "$package/$exe" "$GITHUB_WORKSPACE/"
-          (cd "$package" && zip -r "$GITHUB_WORKSPACE/DiscordActivityMock-$RELEASE_TAG-$arch.zip" .)
-        done
-        
+        path: release
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || github.ref_name }}
-        files: |
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x64.exe
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x64.zip
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86.exe
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86.zip
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-arm64.exe
-          DiscordActivityMock-${{ env.RELEASE_TAG }}-win-arm64.zip
+        files: release/DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86.exe
         fail_on_unmatched_files: true
         generate_release_notes: true
       env:

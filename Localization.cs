@@ -37,11 +37,11 @@ namespace DiscordActivityMockV2
                 [Language.Spanish] = "Copiar del Sistema",
                 [Language.Portuguese] = "Copiar do Sistema"
             },
-            ["DownloadBackup"] = new()
+            ["BundledBackup"] = new()
             {
-                [Language.English] = "Download Backup",
-                [Language.Spanish] = "Descargar Respaldo",
-                [Language.Portuguese] = "Baixar Backup"
+                [Language.English] = "Use bundled x86",
+                [Language.Spanish] = "Usar respaldo x86",
+                [Language.Portuguese] = "Usar backup x86"
             },
             ["Status"] = new()
             {

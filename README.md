@@ -17,7 +17,7 @@
 
 Discord Activity Mock is a Windows utility that experiments with Discord's detected-game status by running an isolated copy of WordPad under a selected executable and folder name. Discord may not recognize every entry or configuration. The app never renames or replaces the system WordPad files.
 
-> **Windows compatibility:** WordPad was removed from Windows 11 version 24H2 and later. The system-copy option is unavailable on those systems; the app's downloadable backup is x64 and requires 64-bit Windows (including supported ARM64 Windows installations).
+> **Windows compatibility:** Each release has one x86 executable for Windows 10/11 x64. Windows runs x86 programs through WoW64, and the app bundles its matching x86 WordPad backup. WordPad's removal from Windows 11 version 24H2 does not affect the bundled backup.
 
 ## ⚠️ Disclaimer
 
@@ -43,20 +43,15 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 
 ### Prerequisites
 
-- 64-bit Windows 10/11 (x64 or ARM64)
+- Windows 10/11 x64 (Windows 10 build 17763 or newer).
 
 ### Installation
 
-1. Download the matching architecture's standalone `.exe` or `.zip` from [Releases](https://github.com/iiroak/DiscordActivityMock/releases)
-2. Run the `.exe` directly, or extract the ZIP and run the included executable. Both are self-contained and do not require a separate .NET installation.
-
-Keep the executable's versioned filename unchanged; WinUI single-file apps require the name they were built with. The ZIP preserves the correct executable name when extracted.
-
-Each release includes x64, x86, and ARM64 builds; GitHub also provides the source-code ZIP and tarball. Release availability depends on a maintainer publishing a tagged build. The app checks for releases but does not install updates automatically.
+Download the single x86 `.exe` from [Releases](https://github.com/iiroak/DiscordActivityMock/releases) and run it directly. It is self-contained, includes the x86 WordPad backup, and does not require .NET installation or an accompanying ZIP. Keep its versioned filename unchanged; WinUI single-file apps require the name they were built with. Release availability depends on a maintainer publishing a tagged build. The app checks for releases but does not install updates automatically.
 
 ### Usage
 
-1. **Get WordPad**: Click "Copy from System" on Windows installations that still include WordPad, or click "Download Backup"
+1. **Get WordPad**: Click "Copy from System" if WordPad is installed, or click "Use bundled x86" for the included backup.
 2. **Select Activity**: Choose a game from the list or create a custom activity
 3. **Start**: Click the Start button to begin mocking the activity
 4. Discord may detect the selected executable as a game; detection depends on Discord and the selected entry.
@@ -81,11 +76,11 @@ cd DiscordActivityMock
 # Restore packages
 dotnet restore
 
-# Publish one self-contained x64 executable
-dotnet publish --configuration Release -p:Platform=x64
+# Publish the self-contained x86 executable
+dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o publish/win-x86
 ```
 
-The executable is written to `bin/Release/net8.0-windows10.0.19041.0/win-x64/single-file/`. Use the `win-x86` or `win-arm64` publish profile to target another architecture.
+The output directory contains the single self-contained x86 executable. GitHub Actions publishes that executable as the only release asset.
 
 ## 🌍 Supported Languages
 

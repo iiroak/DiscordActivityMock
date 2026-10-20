@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -15,8 +13,10 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Foundation;
 using Windows.Graphics;
 
 namespace DiscordActivityMockV2
@@ -62,8 +62,6 @@ namespace DiscordActivityMockV2
             Path.GetTempPath(), "DiscordActivityMock", "Sessions");
 
         private static readonly string githubActivityList = "https://raw.githubusercontent.com/iiroak/DiscordActivityMock/refs/heads/main/resources/ActivityList.json";
-        private static readonly string githubWordPad = "https://raw.githubusercontent.com/iiroak/DiscordActivityMock/refs/heads/main/resources/WordPad.zip";
-        private const string WordPadArchiveSha256 = "79baf35a1a7149323f94fd70a0821936e9585f27644fd204839b88cd77b09ae3";
         private static readonly HttpClient activityHttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
         
         private string? _originalWordPadPath;  // Path to original WordPad backup
@@ -125,13 +123,13 @@ namespace DiscordActivityMockV2
             _autoStopTimer = new DispatcherTimer();
             _autoStopTimer.Tick += AutoStopTimer_Tick;
             
-            // Set window size and get AppWindow
+            // Set the initial window size and center it in the active display work area.
             _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
             var workArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Primary).WorkArea;
-            int initialWidth = Math.Min(1450, Math.Max(900, workArea.Width - 32));
-            int initialHeight = Math.Min(650, Math.Max(440, workArea.Height - 32));
+            int initialWidth = Math.Min(860, Math.Max(1, workArea.Width - 32));
+            int initialHeight = Math.Min(400, Math.Max(1, workArea.Height - 32));
             _appWindow.Resize(new SizeInt32(initialWidth, initialHeight));
             _appWindow.Move(new PointInt32(
                 workArea.X + Math.Max(0, (workArea.Width - initialWidth) / 2),
@@ -158,6 +156,7 @@ namespace DiscordActivityMockV2
             // Initialize UI
             ActivityListCombo.Items.Add("Custom Activity");
             ActivityListCombo.SelectedIndex = 0;
+            ActivityPopupList.Items.Add("Custom Activity");
             
             // Apply loaded settings to UI
             ApplyLoadedSettings();
@@ -233,7 +232,7 @@ namespace DiscordActivityMockV2
             
             // Buttons
             CopyFromSystemText.Text = Localization.Get("CopyFromSystem");
-            DownloadBackupText.Text = Localization.Get("DownloadBackup");
+            BundledWordPadText.Text = Localization.Get("BundledBackup");
             StartBtnText.Text = Localization.Get("Start");
             StopBtnText.Text = Localization.Get("Stop");
             
@@ -367,7 +366,7 @@ namespace DiscordActivityMockV2
         {
             LoadingRing.IsActive = isLoading;
             WordPadSystemBtn.IsEnabled = !isLoading;
-            WordPadGitHubBtn.IsEnabled = !isLoading;
+            BundledWordPadBtn.IsEnabled = !isLoading;
         }
 
         private void UpdateActivityControls()
@@ -385,7 +384,7 @@ namespace DiscordActivityMockV2
             ActivitySearchBox.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
             FetchActivitiesBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
             WordPadSystemBtn.IsEnabled = !_isActivityRunning && !_isStarting;
-            WordPadGitHubBtn.IsEnabled = !_isActivityRunning && !_isStarting;
+            BundledWordPadBtn.IsEnabled = !_isActivityRunning && !_isStarting;
             HideSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
             TimerSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
             
@@ -695,11 +694,7 @@ namespace DiscordActivityMockV2
                 string workingPath = Path.Combine(fullWorkingRoot, "WordPad");
                 Directory.CreateDirectory(workingPath);
 
-                foreach (var file in Directory.GetFiles(_originalWordPadPath))
-                {
-                    string destFile = Path.Combine(workingPath, Path.GetFileName(file));
-                    File.Copy(file, destFile, true);
-                }
+                CopyWordPadFiles(_originalWordPadPath, workingPath);
 
                 _currentFolderPath = workingPath;
                 _currentExePath = Path.Combine(workingPath, "wordpad.exe");
@@ -746,6 +741,31 @@ namespace DiscordActivityMockV2
             finally
             {
                 _dialogSemaphore.Release();
+            }
+        }
+
+        private static void CopyWordPadFiles(string sourceDirectory, string destinationDirectory)
+        {
+            foreach (string sourceFile in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                string relativePath = Path.GetRelativePath(sourceDirectory, sourceFile);
+                string destinationFile = Path.Combine(destinationDirectory, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+                File.Copy(sourceFile, destinationFile, overwrite: true);
+            }
+        }
+
+        private static void RenameWordPadMuiFiles(string workingDirectory, string sourceExecutableName, string targetExecutableName)
+        {
+            string sourceMuiName = Path.GetFileName(sourceExecutableName) + ".mui";
+            foreach (string sourceMuiPath in Directory.EnumerateFiles(workingDirectory, sourceMuiName, SearchOption.AllDirectories))
+            {
+                string targetMuiPath = Path.Combine(
+                    Path.GetDirectoryName(sourceMuiPath)!,
+                    targetExecutableName + ".exe.mui");
+                if (File.Exists(targetMuiPath))
+                    throw new IOException("The target executable's localized resource file already exists.");
+                File.Move(sourceMuiPath, targetMuiPath);
             }
         }
         
@@ -807,7 +827,7 @@ namespace DiscordActivityMockV2
 
         #endregion
 
-        #region Step 1: Copy or Download WordPad
+        #region Step 1: Copy or Prepare Bundled WordPad
 
         private async Task<string> CopyWordPadFolder()
         {
@@ -824,11 +844,7 @@ namespace DiscordActivityMockV2
                 string backupPath = Path.Combine(CreateSessionRoot(), "Original");
                 Directory.CreateDirectory(backupPath);
                 
-                foreach (var file in Directory.GetFiles(pathWordPad))
-                {
-                    string destFile = Path.Combine(backupPath, Path.GetFileName(file));
-                    File.Copy(file, destFile, true);
-                }
+                CopyWordPadFiles(pathWordPad, backupPath);
 
                 ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
                 return backupPath;
@@ -842,98 +858,47 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private async Task<string> DownloadAndExtractWordPad()
+        private async Task<string> PrepareBundledWordPadAsync()
         {
-            string backupPath = Path.Combine(Path.GetTempPath(), "WordPadOriginal_" + Guid.NewGuid().ToString("N")[..8]);
-            string zipPath = Path.Combine(Path.GetTempPath(), "WordPad_" + Guid.NewGuid().ToString("N")[..8] + ".zip");
-            bool extractionSucceeded = false;
-            
             try
             {
                 CleanTemporaryFiles();
                 string sessionRoot = CreateSessionRoot();
-                backupPath = Path.Combine(sessionRoot, "Original");
-                
-                WordPadStatusBar.Severity = InfoBarSeverity.Informational;
-                WordPadStatusBar.Message = "Downloading...";
-
-                using (HttpClient client = new HttpClient())
-                {
-                    client.Timeout = TimeSpan.FromMinutes(2);
-                    using var response = await client.GetAsync(githubWordPad, HttpCompletionOption.ResponseHeadersRead, _windowLifetime.Token);
-                    response.EnsureSuccessStatusCode();
-                    if (response.Content.Headers.ContentLength is long contentLength && contentLength > 50 * 1024 * 1024)
-                        throw new InvalidDataException("The WordPad archive exceeds the allowed download size.");
-
-                    await using var source = await response.Content.ReadAsStreamAsync(_windowLifetime.Token);
-                    await using var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
-                    var buffer = new byte[81920];
-                    long downloaded = 0;
-                    int bytesRead;
-                    while ((bytesRead = await source.ReadAsync(buffer.AsMemory(), _windowLifetime.Token)) > 0)
-                    {
-                        downloaded += bytesRead;
-                        if (downloaded > 50 * 1024 * 1024)
-                            throw new InvalidDataException("The WordPad archive exceeds the allowed download size.");
-                        await destination.WriteAsync(buffer.AsMemory(0, bytesRead), _windowLifetime.Token);
-                    }
-                }
-
-                await using var archiveStream = File.OpenRead(zipPath);
-                string archiveHash = Convert.ToHexString(await SHA256.HashDataAsync(archiveStream));
-                archiveStream.Close();
-                if (!archiveHash.Equals(WordPadArchiveSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("The downloaded WordPad archive failed its integrity check.");
-
-                WordPadStatusBar.Message = "Preparing files...";
+                string backupPath = Path.Combine(sessionRoot, "Original");
                 Directory.CreateDirectory(backupPath);
-                using (var archive = ZipFile.OpenRead(zipPath))
+
+                WordPadStatusBar.Severity = InfoBarSeverity.Informational;
+                WordPadStatusBar.Message = "Preparing bundled x86 WordPad...";
+
+                var bundledFiles = new[]
                 {
-                    long uncompressedSize = archive.Entries.Sum(entry => entry.Length);
-                    if (uncompressedSize > 50 * 1024 * 1024 || archive.Entries.Count > 100)
-                        throw new InvalidDataException("The WordPad archive contains an unexpected amount of data.");
+                    (Source: Path.Combine("resources", "wordpad.exe"), Destination: "wordpad.exe"),
+                    (Source: Path.Combine("resources", "WordpadFilter.dll"), Destination: "WordpadFilter.dll")
+                };
 
-                    string extractionRoot = Path.GetFullPath(backupPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                    foreach (var entry in archive.Entries)
-                    {
-                        string destination = Path.GetFullPath(Path.Combine(backupPath, entry.FullName));
-                        if (!destination.StartsWith(extractionRoot, StringComparison.OrdinalIgnoreCase))
-                            throw new InvalidDataException("The WordPad archive contains an invalid file path.");
-                    }
+                foreach (var (sourceRelativePath, destinationRelativePath) in bundledFiles)
+                {
+                    string? sourceFile = ResolveBundledAssetPath(sourceRelativePath);
+                    if (sourceFile == null)
+                        throw new FileNotFoundException("A required bundled x86 WordPad file is missing.", sourceRelativePath);
+
+                    string destinationFile = Path.Combine(backupPath, destinationRelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+                    File.Copy(sourceFile, destinationFile, overwrite: true);
                 }
-                ZipFile.ExtractToDirectory(zipPath, backupPath);
-                File.Delete(zipPath);
 
-                string wordpadPath = Path.Combine(backupPath, "wordpad.exe");
-                ValidateWordPadExecutable(wordpadPath);
-                extractionSucceeded = true;
+                ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
                 return backupPath;
-            }
-            catch (HttpRequestException ex)
-            {
-                AppLog.Error("Download WordPad", ex);
-                await ShowDialogAsync("Download Error", $"Error downloading WordPad: {ex.Message}");
-                WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "Download failed";
             }
             catch (Exception ex)
             {
-                AppLog.Error("Extract WordPad", ex);
-                await ShowDialogAsync("Extraction Error", $"Error extracting WordPad: {ex.Message}");
+                AppLog.Error("Prepare bundled x86 WordPad", ex);
+                CleanTemporaryFiles();
+                await ShowDialogAsync("Bundled WordPad unavailable", ex.Message);
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "Failed to extract";
+                WordPadStatusBar.Message = "Bundled backup unavailable";
+                return "";
             }
-            finally
-            {
-                if (File.Exists(zipPath))
-                {
-                    try { File.Delete(zipPath); } catch { }
-                }
-                if (!extractionSucceeded && !string.IsNullOrEmpty(_sessionRootPath))
-                    CleanTemporaryFiles();
-            }
-            
-            return "";
         }
 
         private void SetupWordPadPaths(string backupPath)
@@ -964,11 +929,15 @@ namespace DiscordActivityMockV2
                 throw new InvalidDataException("The WordPad executable has an invalid PE header.");
 
             stream.Position = peOffset;
-            if (reader.ReadUInt32() != 0x00004550 || reader.ReadUInt16() != 0x8664)
-                throw new InvalidDataException("This WordPad copy is not a supported x64 executable.");
+            if (reader.ReadUInt32() != 0x00004550)
+                throw new InvalidDataException("The WordPad executable has an invalid PE signature.");
 
-            if (RuntimeInformation.OSArchitecture == Architecture.X86)
-                throw new PlatformNotSupportedException("The available WordPad copy requires 64-bit Windows.");
+            ushort machine = reader.ReadUInt16();
+            if (machine is not (0x014c or 0x8664))
+                throw new InvalidDataException("This WordPad copy must be an x86 or x64 executable.");
+
+            if (machine == 0x8664 && RuntimeInformation.OSArchitecture == Architecture.X86)
+                throw new PlatformNotSupportedException("This WordPad copy requires 64-bit Windows.");
         }
 
         private async void WordPadSystemBtn_Click(object sender, RoutedEventArgs e)
@@ -1007,7 +976,7 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private async void WordPadGitHubBtn_Click(object sender, RoutedEventArgs e)
+        private async void WordPadBundledBtn_Click(object sender, RoutedEventArgs e)
         {
             if (_isActivityRunning || _isStarting || _isWindowClosed)
             {
@@ -1018,7 +987,7 @@ namespace DiscordActivityMockV2
             SetLoading(true);
             try
             {
-                string backupPath = await DownloadAndExtractWordPad();
+                string backupPath = await PrepareBundledWordPadAsync();
                 if (backupPath.Length == 0)
                     return;
 
@@ -1030,7 +999,7 @@ namespace DiscordActivityMockV2
             }
             catch (Exception ex)
             {
-                AppLog.Error("Prepare downloaded WordPad", ex);
+                AppLog.Error("Prepare bundled WordPad", ex);
                 CleanTemporaryFiles();
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
                 WordPadStatusBar.Message = "WordPad setup failed";
@@ -1060,7 +1029,7 @@ namespace DiscordActivityMockV2
                 }
                 else if (_downloadedActivities != null)
                 {
-                    var activity = _downloadedActivities.FirstOrDefault(a => a.name == selectedActivity);
+                    var activity = GetSelectedActivityItem();
                     if (activity != null)
                     {
                         FolderNameTxt.Text = activity.folder;
@@ -1079,7 +1048,67 @@ namespace DiscordActivityMockV2
         {
             string selectedActivity = ActivityListCombo.SelectedItem?.ToString() ?? "";
             return _downloadedActivities?.FirstOrDefault(activity =>
-                string.Equals(activity.name, selectedActivity, StringComparison.OrdinalIgnoreCase));
+                string.Equals(GetActivityDisplayName(activity), selectedActivity, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string GetActivityDisplayName(ActivityItem activity) =>
+            activity.steamManifest == null ? activity.name : $"{activity.name} (SteamApps)";
+
+        private void ActivityListCombo_DropDownOpened(object sender, object e)
+        {
+            // Replace the built-in dropdown so the list is consistently anchored below its field.
+            ActivityListCombo.IsDropDownOpen = false;
+            RefreshActivityPopupItems();
+
+            Point comboPosition = ActivityListCombo.TransformToVisual(RootGrid).TransformPoint(new Point(0, 0));
+            ActivityPopupList.Width = ActivityListCombo.ActualWidth;
+            ActivityPopupList.Height = Math.Max(96, Math.Min(340,
+                RootGrid.ActualHeight - comboPosition.Y - ActivityListCombo.ActualHeight - 10));
+            ActivityListPopup.IsOpen = true;
+            ActivityPopupList.Focus(FocusState.Programmatic);
+        }
+
+        private void RefreshActivityPopupItems()
+        {
+            string selected = ActivityListCombo.SelectedItem?.ToString() ?? "";
+            ActivityPopupList.Items.Clear();
+
+            foreach (object item in ActivityListCombo.Items)
+                ActivityPopupList.Items.Add(item?.ToString() ?? "");
+
+            ActivityPopupList.SelectedItem = selected;
+            if (ActivityListPopup.IsOpen && ActivityPopupList.SelectedItem != null)
+                ActivityPopupList.ScrollIntoView(ActivityPopupList.SelectedItem);
+        }
+
+        private void ActivityPopupList_ItemClick(object sender, ItemClickEventArgs e)
+        {
+            CommitActivityPopupSelection(e.ClickedItem?.ToString());
+        }
+
+        private void ActivityPopupList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                CommitActivityPopupSelection(ActivityPopupList.SelectedItem?.ToString());
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                ActivityListPopup.IsOpen = false;
+                ActivityListCombo.Focus(FocusState.Programmatic);
+                e.Handled = true;
+            }
+        }
+
+        private void CommitActivityPopupSelection(string? selectedActivity)
+        {
+            if (string.IsNullOrEmpty(selectedActivity))
+                return;
+
+            ActivityListCombo.SelectedItem = selectedActivity;
+            ActivityListPopup.IsOpen = false;
+            ActivityListCombo.Focus(FocusState.Programmatic);
         }
 
         private async Task<bool> ConfirmSteamManifestSetupAsync(SteamManifestItem manifest)
@@ -1246,7 +1275,7 @@ namespace DiscordActivityMockV2
 
             foreach (var activity in filteredActivities)
             {
-                ActivityListCombo.Items.Add(activity.name);
+                ActivityListCombo.Items.Add(GetActivityDisplayName(activity));
             }
 
             // Always add Custom Activity at the end
@@ -1260,7 +1289,7 @@ namespace DiscordActivityMockV2
                     ?? filteredActivities.FirstOrDefault(activity =>
                         activity.name.StartsWith(normalizedSearch, StringComparison.OrdinalIgnoreCase))
                     ?? filteredActivities[0];
-                selection = closestMatch.name;
+                selection = GetActivityDisplayName(closestMatch);
             }
             else if (string.IsNullOrWhiteSpace(normalizedSearch) && !resetSelectionWhenSearchCleared &&
                      ActivityListCombo.Items.Contains(previousSelection))
@@ -1269,6 +1298,7 @@ namespace DiscordActivityMockV2
             }
 
             ActivityListCombo.SelectedItem = selection;
+            RefreshActivityPopupItems();
         }
 
         private void ActivitySearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1363,6 +1393,7 @@ namespace DiscordActivityMockV2
                         string newExePath = Path.Combine(currentExeDirectory, targetExeName + ".exe");
                         if (File.Exists(newExePath))
                             throw new IOException("The target executable already exists in this isolated working folder.");
+                        RenameWordPadMuiFiles(_currentFolderPath, Path.GetFileName(_currentExePath), targetExeName);
                         File.Move(_currentExePath, newExePath);
                         _currentExePath = newExePath;
                     }

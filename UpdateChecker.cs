@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -68,13 +67,27 @@ namespace DiscordActivityMockV2
                     string? downloadUrl = null;
                     var platform = GetPlatform();
                     
+                    string executableSuffix = $"win-{platform}.exe";
                     foreach (var asset in release.Assets)
                     {
-                        if (asset.Name.Contains($"win-{platform}", StringComparison.OrdinalIgnoreCase) &&
-                            asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        if (asset.Name.EndsWith(executableSuffix, StringComparison.OrdinalIgnoreCase))
                         {
                             downloadUrl = asset.DownloadUrl;
                             break;
+                        }
+                    }
+
+                    if (downloadUrl == null)
+                    {
+                        foreach (var asset in release.Assets)
+                        {
+                            if (asset.Name.Contains($"win-{platform}", StringComparison.OrdinalIgnoreCase) &&
+                                asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                                !asset.Name.Contains("-Setup.exe", StringComparison.OrdinalIgnoreCase))
+                            {
+                                downloadUrl = asset.DownloadUrl;
+                                break;
+                            }
                         }
                     }
 
@@ -95,16 +108,7 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private static string GetPlatform()
-        {
-            return RuntimeInformation.ProcessArchitecture switch
-            {
-                Architecture.X64 => "x64",
-                Architecture.X86 => "x86",
-                Architecture.Arm64 => "arm64",
-                _ => "unsupported"
-            };
-        }
+        private static string GetPlatform() => "x86";
 
         private static bool IsNewerVersion(string latest, string current)
         {

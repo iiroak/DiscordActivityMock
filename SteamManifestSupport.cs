@@ -94,6 +94,8 @@ namespace DiscordActivityMockV2
 
                 bool createdGameDirectory = false;
                 var createdFiles = new List<string>();
+                var createdDirectories = new List<string>();
+                var createdDirectorySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 bool createdManifest = false;
                 try
                 {
@@ -103,19 +105,38 @@ namespace DiscordActivityMockV2
                         createdGameDirectory = true;
                     }
 
-                    foreach (string sourceFile in Directory.GetFiles(sourceFolder, "*", SearchOption.TopDirectoryOnly))
+                    foreach (string sourceFile in Directory.GetFiles(sourceFolder, "*", SearchOption.AllDirectories))
                     {
-                        string sourceFileName = Path.GetFileName(sourceFile);
-                        string destinationFileName = string.Equals(sourceFile, sourceExecutable, StringComparison.OrdinalIgnoreCase)
-                            ? targetExecutableName + ".exe"
-                            : sourceFileName;
-                        string destinationFile = Path.Combine(gameDirectory, destinationFileName);
+                        string destinationRelativePath = GetDestinationRelativePath(
+                            sourceFolder, sourceExecutable, targetExecutableName, sourceFile);
+                        string destinationFile = Path.Combine(gameDirectory, destinationRelativePath);
 
                         if (File.Exists(destinationFile))
                         {
                             if (!FilesMatch(sourceFile, destinationFile))
-                                throw new IOException($"The existing Steam file '{destinationFileName}' does not match the temporary mock executable and was left untouched.");
+                                throw new IOException($"The existing Steam file '{destinationRelativePath}' does not match the temporary mock executable and was left untouched.");
                             continue;
+                        }
+
+                        string destinationDirectory = Path.GetDirectoryName(destinationFile)!;
+                        if (!Directory.Exists(destinationDirectory))
+                        {
+                            var missingDirectories = new List<string>();
+                            for (string? currentDirectory = destinationDirectory;
+                                 !string.IsNullOrEmpty(currentDirectory) && !Directory.Exists(currentDirectory);
+                                 currentDirectory = Path.GetDirectoryName(currentDirectory))
+                            {
+                                missingDirectories.Add(currentDirectory);
+                                if (string.Equals(Path.GetDirectoryName(currentDirectory), gameDirectory, StringComparison.OrdinalIgnoreCase))
+                                    break;
+                            }
+
+                            Directory.CreateDirectory(destinationDirectory);
+                            foreach (string createdDirectory in missingDirectories)
+                            {
+                                if (createdDirectorySet.Add(createdDirectory))
+                                    createdDirectories.Add(createdDirectory);
+                            }
                         }
 
                         createdFiles.Add(destinationFile);
@@ -143,6 +164,10 @@ namespace DiscordActivityMockV2
                     {
                         try { File.Delete(createdFile); } catch { }
                     }
+                    foreach (string createdDirectory in createdDirectories)
+                    {
+                        try { Directory.Delete(createdDirectory, recursive: false); } catch { }
+                    }
                     if (createdGameDirectory)
                     {
                         try { Directory.Delete(gameDirectory, recursive: true); } catch { }
@@ -157,6 +182,10 @@ namespace DiscordActivityMockV2
                     foreach (string createdFile in createdFiles)
                     {
                         try { File.Delete(createdFile); } catch { }
+                    }
+                    foreach (string createdDirectory in createdDirectories)
+                    {
+                        try { Directory.Delete(createdDirectory, recursive: false); } catch { }
                     }
                     if (createdGameDirectory)
                     {
@@ -225,31 +254,64 @@ namespace DiscordActivityMockV2
             string sourceExecutable,
             string targetExecutableName)
         {
-            if (Directory.GetDirectories(destinationFolder, "*", SearchOption.TopDirectoryOnly).Length > 0)
-                return false;
-
-            string[] sourceFiles = Directory.GetFiles(sourceFolder, "*", SearchOption.TopDirectoryOnly);
+            string[] sourceFiles = Directory.GetFiles(sourceFolder, "*", SearchOption.AllDirectories);
             var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var expectedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string sourceFile in sourceFiles)
             {
-                string destinationName = string.Equals(sourceFile, sourceExecutable, StringComparison.OrdinalIgnoreCase)
-                    ? targetExecutableName + ".exe"
-                    : Path.GetFileName(sourceFile);
-                if (!expected.TryAdd(destinationName, sourceFile))
+                string destinationRelativePath = GetDestinationRelativePath(
+                    sourceFolder, sourceExecutable, targetExecutableName, sourceFile);
+                if (!expected.TryAdd(destinationRelativePath, sourceFile))
+                    return false;
+
+                string? relativeDirectory = Path.GetDirectoryName(destinationRelativePath);
+                while (!string.IsNullOrEmpty(relativeDirectory))
+                {
+                    expectedDirectories.Add(relativeDirectory);
+                    relativeDirectory = Path.GetDirectoryName(relativeDirectory);
+                }
+            }
+
+            foreach (string destinationDirectory in Directory.GetDirectories(destinationFolder, "*", SearchOption.AllDirectories))
+            {
+                string relativeDirectory = Path.GetRelativePath(destinationFolder, destinationDirectory);
+                if (!expectedDirectories.Contains(relativeDirectory))
                     return false;
             }
 
-            string[] destinationFiles = Directory.GetFiles(destinationFolder, "*", SearchOption.TopDirectoryOnly);
+            string[] destinationFiles = Directory.GetFiles(destinationFolder, "*", SearchOption.AllDirectories);
             if (destinationFiles.Length > expected.Count)
                 return false;
 
             foreach (string destinationFile in destinationFiles)
             {
-                if (!expected.TryGetValue(Path.GetFileName(destinationFile), out string? sourceFile) ||
+                string relativePath = Path.GetRelativePath(destinationFolder, destinationFile);
+                if (!expected.TryGetValue(relativePath, out string? sourceFile) ||
                     !FilesMatch(sourceFile, destinationFile))
                     return false;
             }
             return true;
+        }
+
+        private static string GetDestinationRelativePath(
+            string sourceFolder,
+            string sourceExecutable,
+            string targetExecutableName,
+            string sourceFile)
+        {
+            if (string.Equals(sourceFile, sourceExecutable, StringComparison.OrdinalIgnoreCase))
+                return targetExecutableName + ".exe";
+
+            string relativePath = Path.GetRelativePath(sourceFolder, sourceFile);
+            string expectedMuiName = Path.GetFileName(sourceExecutable) + ".mui";
+            if (!string.Equals(Path.GetFileName(relativePath), expectedMuiName, StringComparison.OrdinalIgnoreCase))
+                return relativePath;
+
+            string? relativeDirectory = Path.GetDirectoryName(relativePath);
+            string localizedFileName = targetExecutableName + ".exe.mui";
+            return string.IsNullOrEmpty(relativeDirectory)
+                ? localizedFileName
+                : Path.Combine(relativeDirectory, localizedFileName);
         }
 
         private static bool FilesMatch(string leftPath, string rightPath)
