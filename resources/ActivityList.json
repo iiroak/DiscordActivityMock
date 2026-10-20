@@ -499,5 +499,10 @@
         "name": "GearUP",
         "folder": "GearUP",
         "exe": "Gearup_ball"
+    },
+    {
+        "name": "Nekome",
+        "folder": "Win64",
+        "exe": "nekomedemo"
     }
 ]
