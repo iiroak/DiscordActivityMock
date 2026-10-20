@@ -15,7 +15,7 @@ on:
         default: 'false'
         type: boolean
       tag_name:
-        description: 'Release tag (required for manual releases, e.g. v2.1.0)'
+        description: 'Release tag (required for manual releases, e.g. v2.2.2)'
         required: false
         type: string
 
@@ -54,30 +54,65 @@ jobs:
       run: dotnet restore DiscordActivityMockV2.csproj -r win-x86
 
     - name: Build x86
-      run: dotnet build DiscordActivityMockV2.csproj -c Release -p:Platform=x86 -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86 --no-restore
+      run: dotnet build DiscordActivityMockV2.csproj -c Release -p:Platform=x86 -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable --no-restore
 
-    - name: Publish standalone x86 executable
+    - name: Publish portable single-file executable
       shell: pwsh
       run: >-
         dotnet publish DiscordActivityMockV2.csproj -c Release -r win-x86 -p:Platform=x86
-        -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86
+        -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable
         -p:PublishReadyToRun=false -p:SelfContained=true -p:PublishSingleFile=true
         -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true
         -p:EnableCompressionInSingleFile=true -p:DebugSymbols=false -p:DebugType=None
-        --no-restore -o publish/win-x86
+        --no-restore -o publish/win-x86-single-file
 
-    - name: Verify standalone executable
+    - name: Publish portable dependency folder
+      shell: pwsh
+      run: >-
+        dotnet publish DiscordActivityMockV2.csproj -c Release -r win-x86 -p:Platform=x86
+        -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable
+        -p:PublishReadyToRun=false -p:SelfContained=true -p:PublishSingleFile=false
+        -p:IncludeNativeLibrariesForSelfExtract=false -p:IncludeAllContentForSelfExtract=false
+        -p:DebugSymbols=false -p:DebugType=None --no-restore -o publish/win-x86-folder
+
+    - name: Package portable EXE, ZIP, and installer
       shell: pwsh
       run: |
-        $expectedExe = "DiscordActivityMock-${env:RELEASE_TAG}-win-x86.exe"
-        $exePath = Join-Path $env:GITHUB_WORKSPACE "publish\win-x86\$expectedExe"
-        if (!(Test-Path -LiteralPath $exePath)) { throw "Expected x86 executable was not published: $exePath" }
+        $ErrorActionPreference = "Stop"
+        $portableExe = "DiscordActivityMock-${env:RELEASE_TAG}-win-x86-Portable.exe"
+        $singleFileExe = Join-Path $env:GITHUB_WORKSPACE "publish\win-x86-single-file\$portableExe"
+        $folderPublish = Join-Path $env:GITHUB_WORKSPACE "publish\win-x86-folder"
+        $releaseDirectory = Join-Path $env:GITHUB_WORKSPACE "release"
 
-    - name: Upload x86 executable
+        if (!(Test-Path -LiteralPath $singleFileExe)) { throw "Single-file executable was not produced: $singleFileExe" }
+        if (!(Test-Path -LiteralPath (Join-Path $folderPublish $portableExe))) { throw "Folder-publish executable was not produced." }
+
+        New-Item -ItemType Directory -Force -Path $releaseDirectory | Out-Null
+        Copy-Item -LiteralPath $singleFileExe -Destination (Join-Path $releaseDirectory $portableExe)
+        Compress-Archive -Path (Join-Path $folderPublish '*') -DestinationPath (Join-Path $releaseDirectory "DiscordActivityMock-${env:RELEASE_TAG}-win-x86-Portable.zip") -CompressionLevel Optimal
+
+        choco install innosetup --yes --no-progress
+        $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+        if (!(Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler was not found: $iscc" }
+        & $iscc "/DAppVersion=$env:RELEASE_TAG" "/DSourceDir=$folderPublish" "/DOutputDir=$releaseDirectory" (Join-Path $env:GITHUB_WORKSPACE "installer\DiscordActivityMock.iss")
+        if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler exited with code $LASTEXITCODE." }
+
+        $requiredArtifacts = @(
+          "DiscordActivityMock-${env:RELEASE_TAG}-win-x86-Setup.exe",
+          "DiscordActivityMock-${env:RELEASE_TAG}-win-x86-Portable.zip",
+          $portableExe
+        )
+        foreach ($artifact in $requiredArtifacts) {
+          if (!(Test-Path -LiteralPath (Join-Path $releaseDirectory $artifact))) {
+            throw "Expected release artifact was not created: $artifact"
+          }
+        }
+
+    - name: Upload x86 release artifacts
       uses: actions/upload-artifact@v4
       with:
         name: DiscordActivityMock-win-x86
-        path: publish/win-x86/*.exe
+        path: release/*
         if-no-files-found: error
 
   release:
@@ -97,7 +132,7 @@ jobs:
         RELEASE_TAG: ${{ github.event.inputs.tag_name }}
       run: |
         if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-          echo "A valid tag such as v2.1.0 is required for a manual release." >&2
+          echo "A valid tag such as v2.2.2 is required for a manual release." >&2
           exit 1
         fi
         git fetch --depth=1 origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -107,7 +142,7 @@ jobs:
           exit 1
         fi
 
-    - name: Download x86 executable
+    - name: Download x86 release artifacts
       uses: actions/download-artifact@v4
       with:
         name: DiscordActivityMock-win-x86
@@ -117,7 +152,10 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || github.ref_name }}
-        files: release/DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86.exe
+        files: |
+          release/DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Setup.exe
+          release/DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable.zip
+          release/DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable.exe
         fail_on_unmatched_files: true
         generate_release_notes: true
       env:

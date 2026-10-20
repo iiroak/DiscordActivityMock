@@ -17,7 +17,7 @@
 
 Discord Activity Mock is a Windows utility that experiments with Discord's detected-game status by running an isolated copy of WordPad under a selected executable and folder name. Discord may not recognize every entry or configuration. The app never renames or replaces the system WordPad files.
 
-> **Windows compatibility:** Each release has one x86 executable for Windows 10/11 x64. Windows runs x86 programs through WoW64, and the app bundles its matching x86 WordPad backup. WordPad's removal from Windows 11 version 24H2 does not affect the bundled backup.
+> **Windows compatibility:** Each release targets Windows 10/11 x64 with x86 binaries. Windows runs x86 programs through WoW64, and the app bundles its matching x86 WordPad backup. WordPad's removal from Windows 11 version 24H2 does not affect the bundled backup.
 
 ## ⚠️ Disclaimer
 
@@ -47,7 +47,13 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 
 ### Installation
 
-Download the single x86 `.exe` from [Releases](https://github.com/iiroak/DiscordActivityMock/releases) and run it directly. It is self-contained, includes the x86 WordPad backup, and does not require .NET installation or an accompanying ZIP. Keep its versioned filename unchanged; WinUI single-file apps require the name they were built with. Release availability depends on a maintainer publishing a tagged build. The app checks for releases but does not install updates automatically.
+Each [Release](https://github.com/iiroak/DiscordActivityMock/releases) includes these three x86 downloads:
+
+- **Portable `.exe`** — one self-contained executable; download and run directly.
+- **Portable `.zip`** — a self-contained application folder with the executable, DLLs, runtimes, and bundled x86 WordPad files. Extract it and run the included executable.
+- **Setup `.exe`** — installs for the current user, adds shortcuts, and provides an uninstaller.
+
+No separate .NET installation is required. The initial window is 860×400 DIPs and scales for the monitor's DPI. Keep the versioned portable executable filename unchanged; WinUI single-file apps require the name they were built with. The app checks for releases but does not install updates automatically.
 
 ### Usage
 
@@ -63,6 +69,7 @@ Download the single x86 `.exe` from [Releases](https://github.com/iiroak/Discord
 - Visual Studio 2022 with .NET Desktop Development workload (or the .NET 8 SDK and Windows build tools)
 - Windows App SDK (restored from NuGet)
 - .NET 8.0 SDK
+- Inno Setup 6, to build the installer locally
 
 ### Build Steps
 
@@ -76,11 +83,14 @@ cd DiscordActivityMock
 # Restore packages
 dotnet restore
 
-# Publish the self-contained x86 executable
-dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o publish/win-x86
+# Publish the standalone portable x86 executable
+dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o publish/win-x86-single-file
+
+# Publish the portable x86 folder with separate DLLs and runtime files
+dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContained=true -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:IncludeAllContentForSelfExtract=false -o publish/win-x86-folder
 ```
 
-The output directory contains the single self-contained x86 executable. GitHub Actions publishes that executable as the only release asset.
+GitHub Actions packages the single-file executable, the folder publication as a ZIP, and the folder publication as an Inno Setup installer.
 
 ## 🌍 Supported Languages
 

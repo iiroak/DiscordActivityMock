@@ -36,7 +36,7 @@ namespace DiscordActivityMockV2
 
     public static class UpdateChecker
     {
-        private const string CurrentVersion = "2.2.1";
+        private const string CurrentVersion = "2.2.2";
         private const string GitHubApiUrl = "https://api.github.com/repos/iiroak/DiscordActivityMock/releases/latest";
         private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
@@ -67,7 +67,7 @@ namespace DiscordActivityMockV2
                     string? downloadUrl = null;
                     var platform = GetPlatform();
                     
-                    string executableSuffix = $"win-{platform}.exe";
+                    string executableSuffix = $"win-{platform}-Portable.exe";
                     foreach (var asset in release.Assets)
                     {
                         if (asset.Name.EndsWith(executableSuffix, StringComparison.OrdinalIgnoreCase))

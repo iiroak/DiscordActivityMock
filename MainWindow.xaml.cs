@@ -13,10 +13,8 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Foundation;
 using Windows.Graphics;
 
 namespace DiscordActivityMockV2
@@ -52,6 +50,9 @@ namespace DiscordActivityMockV2
         // Win32 API for hiding windows
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hWnd);
         
         private const int SW_HIDE = 0;
         
@@ -123,17 +124,22 @@ namespace DiscordActivityMockV2
             _autoStopTimer = new DispatcherTimer();
             _autoStopTimer.Tick += AutoStopTimer_Tick;
             
-            // Set the initial window size and center it in the active display work area.
+            // AppWindow.Resize uses physical pixels; convert the desired 860x400 DIPs at this monitor's DPI.
             _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
             var workArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Primary).WorkArea;
-            int initialWidth = Math.Min(860, Math.Max(1, workArea.Width - 32));
-            int initialHeight = Math.Min(400, Math.Max(1, workArea.Height - 32));
+            uint dpi = GetDpiForWindow(_hwnd);
+            double dpiScale = dpi == 0 ? 1.0 : dpi / 96.0;
+            int desiredWidth = (int)Math.Round(860 * dpiScale);
+            int desiredHeight = (int)Math.Round(400 * dpiScale);
+            int workAreaMargin = (int)Math.Round(32 * dpiScale);
+            int initialWidth = Math.Min(desiredWidth, Math.Max(1, workArea.Width - workAreaMargin));
+            int initialHeight = Math.Min(desiredHeight, Math.Max(1, workArea.Height - workAreaMargin));
             _appWindow.Resize(new SizeInt32(initialWidth, initialHeight));
             _appWindow.Move(new PointInt32(
                 workArea.X + Math.Max(0, (workArea.Width - initialWidth) / 2),
-                workArea.Y));
+                workArea.Y + Math.Max(0, (workArea.Height - initialHeight) / 2)));
 
             try
             {
@@ -156,7 +162,6 @@ namespace DiscordActivityMockV2
             // Initialize UI
             ActivityListCombo.Items.Add("Custom Activity");
             ActivityListCombo.SelectedIndex = 0;
-            ActivityPopupList.Items.Add("Custom Activity");
             
             // Apply loaded settings to UI
             ApplyLoadedSettings();
@@ -1054,63 +1059,6 @@ namespace DiscordActivityMockV2
         private static string GetActivityDisplayName(ActivityItem activity) =>
             activity.steamManifest == null ? activity.name : $"{activity.name} (SteamApps)";
 
-        private void ActivityListCombo_DropDownOpened(object sender, object e)
-        {
-            // Replace the built-in dropdown so the list is consistently anchored below its field.
-            ActivityListCombo.IsDropDownOpen = false;
-            RefreshActivityPopupItems();
-
-            Point comboPosition = ActivityListCombo.TransformToVisual(RootGrid).TransformPoint(new Point(0, 0));
-            ActivityPopupList.Width = ActivityListCombo.ActualWidth;
-            ActivityPopupList.Height = Math.Max(96, Math.Min(340,
-                RootGrid.ActualHeight - comboPosition.Y - ActivityListCombo.ActualHeight - 10));
-            ActivityListPopup.IsOpen = true;
-            ActivityPopupList.Focus(FocusState.Programmatic);
-        }
-
-        private void RefreshActivityPopupItems()
-        {
-            string selected = ActivityListCombo.SelectedItem?.ToString() ?? "";
-            ActivityPopupList.Items.Clear();
-
-            foreach (object item in ActivityListCombo.Items)
-                ActivityPopupList.Items.Add(item?.ToString() ?? "");
-
-            ActivityPopupList.SelectedItem = selected;
-            if (ActivityListPopup.IsOpen && ActivityPopupList.SelectedItem != null)
-                ActivityPopupList.ScrollIntoView(ActivityPopupList.SelectedItem);
-        }
-
-        private void ActivityPopupList_ItemClick(object sender, ItemClickEventArgs e)
-        {
-            CommitActivityPopupSelection(e.ClickedItem?.ToString());
-        }
-
-        private void ActivityPopupList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
-        {
-            if (e.Key == Windows.System.VirtualKey.Enter)
-            {
-                CommitActivityPopupSelection(ActivityPopupList.SelectedItem?.ToString());
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.Escape)
-            {
-                ActivityListPopup.IsOpen = false;
-                ActivityListCombo.Focus(FocusState.Programmatic);
-                e.Handled = true;
-            }
-        }
-
-        private void CommitActivityPopupSelection(string? selectedActivity)
-        {
-            if (string.IsNullOrEmpty(selectedActivity))
-                return;
-
-            ActivityListCombo.SelectedItem = selectedActivity;
-            ActivityListPopup.IsOpen = false;
-            ActivityListCombo.Focus(FocusState.Programmatic);
-        }
-
         private async Task<bool> ConfirmSteamManifestSetupAsync(SteamManifestItem manifest)
         {
             var dialog = new ContentDialog
@@ -1298,7 +1246,6 @@ namespace DiscordActivityMockV2
             }
 
             ActivityListCombo.SelectedItem = selection;
-            RefreshActivityPopupItems();
         }
 
         private void ActivitySearchBox_TextChanged(object sender, TextChangedEventArgs e)
