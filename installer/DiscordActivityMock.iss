@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppExeName
-  #define AppExeName "DiscordActivityMock-v2.2.6-win-x86-Portable.exe"
+  #define AppExeName "DiscordActivityMock-v2.2.7-win-x86-Portable.exe"
 #endif
 
 [Setup]
@@ -54,5 +54,4 @@ Name: "{autodesktop}\Discord Activity Mock"; Filename: "{app}\{#AppExeName}"; Ta
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch Discord Activity Mock"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: WizardSilent
