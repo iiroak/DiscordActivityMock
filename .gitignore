@@ -2,3 +2,6 @@
 bin/
 obj/
 script/
+watcher/
+build_log.txt
+*.csproj.user

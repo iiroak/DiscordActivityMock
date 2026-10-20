@@ -153,12 +153,6 @@ namespace DiscordActivityMockV2
                 [Language.Spanish] = "GitHub",
                 [Language.Portuguese] = "GitHub"
             },
-            ["Discord"] = new()
-            {
-                [Language.English] = "Discord",
-                [Language.Spanish] = "Discord",
-                [Language.Portuguese] = "Discord"
-            },
             ["About"] = new()
             {
                 [Language.English] = "About",

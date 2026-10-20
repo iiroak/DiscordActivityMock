@@ -33,12 +33,6 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 - 🌍 **Multi-language Support** - English, Spanish, and Portuguese
 - 🔄 **In-app updates** - Checks for new releases at startup and from About, then downloads the package matching the current installation
 
-## 📸 Screenshots
-
-<p align="center">
-  <img src="docs/screenshot.png" alt="Discord Activity Mock main window" width="900">
-</p>
-
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -124,7 +118,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📞 Contact & Support
 
-- **Discord**: [Join our server](https://discord.com)
 - **GitHub**: [@iiroak](https://github.com/iiroak)
 
 ## ⭐ Show your support

@@ -403,7 +403,6 @@ namespace DiscordActivityMockV2
             
             // Footer
             GitHubBtnText.Text = Localization.Get("GitHub");
-            DiscordBtnText.Text = Localization.Get("Discord");
             AboutBtnText.Text = Localization.Get("About");
             MadeWithText.Text = Localization.Get("MadeWith");
             ByText.Text = Localization.Get("By");
@@ -1815,11 +1814,6 @@ namespace DiscordActivityMockV2
         {
             OpenUrl("https://github.com/iiroak");
         }
-        private void DiscordBtn_Click(object sender, RoutedEventArgs e)
-        {
-            OpenUrl("https://discord.com");
-        }
-
         private async void InfoBtn_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new ContentDialog

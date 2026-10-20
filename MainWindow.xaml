@@ -351,20 +351,13 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 
-                <!-- Social Links (Left) -->
+                <!-- Project Links (Left) -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button x:Name="GitHubBtn" ToolTipService.ToolTip="GitHub" Click="GitHubBtn_Click"
                             Background="Transparent" BorderThickness="0" Padding="8,6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE943;" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="GitHubBtnText" Text="GitHub" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="DiscordBtn" ToolTipService.ToolTip="Discord" Click="DiscordBtn_Click"
-                            Background="Transparent" BorderThickness="0" Padding="8,6">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE8BD;" FontSize="14" Foreground="#5865F2"/>
-                            <TextBlock x:Name="DiscordBtnText" Text="Discord" FontSize="11" Foreground="#5865F2"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="InfoBtn" ToolTipService.ToolTip="About" Click="InfoBtn_Click"

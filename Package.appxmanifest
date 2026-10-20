@@ -9,7 +9,7 @@
 
   <Identity
     Name="8d13e2ad-b6c6-4821-bb7a-7a71d74f5b27"
-    Publisher="CN=Discord Activity Mock"
+    Publisher="CN=DiscordActivityMock"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="8d13e2ad-b6c6-4821-bb7a-7a71d74f5b27" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
