@@ -36,7 +36,7 @@ namespace DiscordActivityMockV2
 
     public static class UpdateChecker
     {
-        private const string CurrentVersion = "2.2.2";
+        private const string CurrentVersion = "2.2.3";
         private const string GitHubApiUrl = "https://api.github.com/repos/iiroak/DiscordActivityMock/releases/latest";
         private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
