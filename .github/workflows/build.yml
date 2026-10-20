@@ -94,7 +94,7 @@ jobs:
         choco install innosetup --yes --no-progress
         $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
         if (!(Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler was not found: $iscc" }
-        & $iscc "/DAppVersion=$env:RELEASE_TAG" "/DSourceDir=$folderPublish" "/DOutputDir=$releaseDirectory" (Join-Path $env:GITHUB_WORKSPACE "installer\DiscordActivityMock.iss")
+        & $iscc "/DAppVersion=$env:RELEASE_TAG" "/DAppExeName=$portableExe" "/DSourceDir=$folderPublish" "/DOutputDir=$releaseDirectory" (Join-Path $env:GITHUB_WORKSPACE "installer\DiscordActivityMock.iss")
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler exited with code $LASTEXITCODE." }
 
         $requiredArtifacts = @(

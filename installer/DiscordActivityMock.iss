@@ -10,7 +10,9 @@
   #define OutputDir "..\release"
 #endif
 
-#define AppExeName "DiscordActivityMock-" + "{#AppVersion}" + "-win-x86-Portable.exe"
+#ifndef AppExeName
+  #define AppExeName "DiscordActivityMock-v2.2.2-win-x86-Portable.exe"
+#endif
 
 [Setup]
 AppId={{C2A64B4B-69FC-4F28-B048-5C4E661D4F32}
