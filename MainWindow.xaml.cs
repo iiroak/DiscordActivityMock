@@ -105,6 +105,7 @@ namespace DiscordActivityMockV2
         private bool _isDarkTheme = true;
         private bool _isInitializing = true;
         private bool _isWindowClosed;
+        private bool _startupUpdateCheckStarted;
 
         public MainWindow()
         {
@@ -173,40 +174,189 @@ namespace DiscordActivityMockV2
 
             _isInitializing = false;
             
-            // Check for updates on startup
+        }
+
+        private void RootGrid_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_startupUpdateCheckStarted)
+                return;
+
+            _startupUpdateCheckStarted = true;
             _ = CheckForUpdatesAsync();
         }
-        
-        private async Task CheckForUpdatesAsync()
+
+        private async Task CheckForUpdatesAsync(bool showResultWhenCurrent = false)
         {
             try
             {
-                var (hasUpdate, newVersion, downloadUrl, releaseUrl) = await UpdateChecker.CheckForUpdateAsync();
-                
-                if (hasUpdate && newVersion != null && releaseUrl != null)
+                UpdateCheckResult check = await UpdateChecker.CheckForUpdateAsync(_windowLifetime.Token);
+                if (!check.Succeeded)
                 {
-                    var dialog = new ContentDialog
-                    {
-                        Title = Localization.Get("UpdateAvailable"),
-                        Content = Localization.Get("UpdateMessage", newVersion),
-                        PrimaryButtonText = Localization.Get("Download"),
-                        CloseButtonText = Localization.Get("Later"),
-                        DefaultButton = ContentDialogButton.Primary,
-                        XamlRoot = this.Content.XamlRoot,
-                        RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
-                    };
-                    
-                    var result = await ShowContentDialogAsync(dialog);
-                    
-                    if (result == ContentDialogResult.Primary)
-                    {
-                        UpdateChecker.OpenReleasePage(releaseUrl);
-                    }
+                    if (showResultWhenCurrent)
+                        await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateCheckFailed"));
+                    return;
+                }
+
+                if (check.Update == null)
+                {
+                    if (showResultWhenCurrent)
+                        await ShowDialogAsync(Localization.Get("Updates"), Localization.Get("NoUpdatesAvailable"));
+                    return;
+                }
+
+                UpdatePackageKind packageKind = UpdateChecker.GetCurrentPackageKind();
+                string? downloadUrl = UpdateChecker.GetUpdateAsset(check.Update, packageKind)?.DownloadUrl;
+                var dialog = new ContentDialog
+                {
+                    Title = Localization.Get("UpdateAvailable"),
+                    Content = Localization.Get("UpdateMessage", check.Update.Version),
+                    PrimaryButtonText = downloadUrl == null ? Localization.Get("ViewOnGitHub") : Localization.Get("UpdateNow"),
+                    SecondaryButtonText = downloadUrl == null ? "" : Localization.Get("ViewOnGitHub"),
+                    CloseButtonText = Localization.Get("Later"),
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = this.Content.XamlRoot,
+                    RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                };
+
+                ContentDialogResult? result = await ShowContentDialogAsync(dialog);
+                if (result == ContentDialogResult.Primary)
+                {
+                    if (downloadUrl == null)
+                        UpdateChecker.OpenReleasePage(check.Update.ReleaseUrl);
+                    else
+                        await DownloadAndApplyUpdateAsync(check.Update, packageKind, downloadUrl);
+                }
+                else if (result == ContentDialogResult.Secondary)
+                {
+                    UpdateChecker.OpenReleasePage(check.Update.ReleaseUrl);
                 }
             }
             catch (Exception ex)
             {
                 AppLog.Error("Update check", ex);
+                if (showResultWhenCurrent && !_isWindowClosed)
+                    await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateCheckFailed"));
+            }
+        }
+
+        private async Task DownloadAndApplyUpdateAsync(UpdateInfo update, UpdatePackageKind packageKind, string downloadUrl)
+        {
+            if (_isActivityRunning || _isStarting)
+            {
+                await ShowDialogAsync(Localization.Get("Error"), Localization.Get("StopActivityBeforeUpdate"));
+                return;
+            }
+
+            string? currentExecutable = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(currentExecutable))
+            {
+                await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateApplyFailed"));
+                return;
+            }
+
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
+            cancellation.CancelAfter(TimeSpan.FromMinutes(10));
+
+            var progressText = new TextBlock
+            {
+                Text = Localization.Get("DownloadingUpdate"),
+                TextWrapping = TextWrapping.Wrap
+            };
+            var progressBar = new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = 100,
+                IsIndeterminate = true,
+                Margin = new Thickness(0, 12, 0, 0)
+            };
+            var progress = new Progress<double>(value =>
+            {
+                progressBar.IsIndeterminate = false;
+                progressBar.Value = value;
+                progressText.Text = Localization.Get("UpdateDownloadProgress", Math.Round(value));
+            });
+            var progressDialog = new ContentDialog
+            {
+                Title = Localization.Get("DownloadingUpdate"),
+                Content = new StackPanel { Spacing = 8, Children = { progressText, progressBar } },
+                CloseButtonText = Localization.Get("Cancel"),
+                XamlRoot = this.Content.XamlRoot,
+                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+            };
+
+            Task<ContentDialogResult?> dialogTask = ShowContentDialogAsync(progressDialog);
+            Task<string?> downloadTask = UpdateChecker.DownloadUpdateAsync(downloadUrl, progress, cancellation.Token);
+            Task firstCompleted = await Task.WhenAny(dialogTask, downloadTask);
+            bool cancelledByUser = firstCompleted == dialogTask;
+            if (cancelledByUser)
+                cancellation.Cancel();
+            else
+                progressDialog.Hide();
+
+            await dialogTask;
+            string? downloadedPath = await downloadTask;
+            if (cancelledByUser || _isWindowClosed)
+                return;
+
+            if (downloadedPath == null)
+            {
+                await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateDownloadFailed"));
+                return;
+            }
+
+            try
+            {
+                if (packageKind == UpdatePackageKind.Installed)
+                {
+                    using Process? installer = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = downloadedPath,
+                        Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+                        UseShellExecute = true
+                    });
+                    if (installer == null)
+                        throw new InvalidOperationException("Windows did not start the update installer.");
+
+                    Application.Current.Exit();
+                    return;
+                }
+
+                string updateDirectory = UpdateChecker.CreatePortableUpdateDirectory(currentExecutable, update.Version);
+                string updatedExecutable;
+                if (packageKind == UpdatePackageKind.PortableExe)
+                {
+                    string assetName = Path.GetFileName(downloadedPath);
+                    updatedExecutable = Path.Combine(updateDirectory, assetName);
+                    File.Copy(downloadedPath, updatedExecutable, overwrite: false);
+                }
+                else
+                {
+                    updatedExecutable = UpdateChecker.ExtractPortableZip(
+                        downloadedPath,
+                        updateDirectory,
+                        UpdateChecker.GetPortableExecutableName(update.Version));
+                }
+
+                UpdateChecker.SavePortableUpdateRedirect(currentExecutable, updatedExecutable);
+                Process? updatedProcess = Process.Start(new ProcessStartInfo
+                {
+                    FileName = updatedExecutable,
+                    WorkingDirectory = Path.GetDirectoryName(updatedExecutable)!,
+                    UseShellExecute = true
+                });
+                if (updatedProcess == null)
+                {
+                    UpdateChecker.RemovePortableUpdateRedirect(currentExecutable);
+                    throw new InvalidOperationException("Windows did not start the updated application.");
+                }
+
+                UpdateChecker.DeleteDownloadedUpdate(downloadedPath);
+                Application.Current.Exit();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Apply update", ex);
+                await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateApplyFailed"));
             }
         }
 
@@ -1675,11 +1825,14 @@ namespace DiscordActivityMockV2
             {
                 Title = Localization.Get("AboutTitle"),
                 Content = Localization.Get("AboutContent"),
+                PrimaryButtonText = Localization.Get("CheckForUpdates"),
                 CloseButtonText = Localization.Get("OK"),
+                DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot,
                 RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
             };
-            await ShowContentDialogAsync(dialog);
+            if (await ShowContentDialogAsync(dialog) == ContentDialogResult.Primary)
+                await CheckForUpdatesAsync(showResultWhenCurrent: true);
         }
 
         private void OpenUrl(string url)

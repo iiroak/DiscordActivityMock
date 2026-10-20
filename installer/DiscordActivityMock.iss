@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppExeName
-  #define AppExeName "DiscordActivityMock-v2.2.2-win-x86-Portable.exe"
+  #define AppExeName "DiscordActivityMock-v2.2.4-win-x86-Portable.exe"
 #endif
 
 [Setup]
@@ -27,6 +27,8 @@ DefaultGroupName=Discord Activity Mock
 UninstallDisplayIcon={app}\{#AppExeName}
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x86 x64compatible
+CloseApplications=force
+RestartApplications=no
 OutputDir="{#OutputDir}"
 OutputBaseFilename=DiscordActivityMock-{#AppVersion}-win-x86-Setup
 SetupIconFile=..\Assets\logo.ico
@@ -36,6 +38,9 @@ Compression=lzma2
 SolidCompression=yes
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
+
+[InstallDelete]
+Type: files; Name: "{app}\DiscordActivityMock-v*-win-x86-Portable.exe"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
@@ -49,3 +54,5 @@ Name: "{autodesktop}\Discord Activity Mock"; Filename: "{app}\{#AppExeName}"; Ta
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch Discord Activity Mock"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: WizardSilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: WizardSilent

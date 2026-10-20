@@ -341,6 +341,60 @@ namespace DiscordActivityMockV2
                 [Language.Spanish] = "Más tarde",
                 [Language.Portuguese] = "Mais tarde"
             },
+            ["CheckForUpdates"] = new()
+            {
+                [Language.English] = "Check for updates",
+                [Language.Spanish] = "Buscar actualizaciones",
+                [Language.Portuguese] = "Buscar atualizações"
+            },
+            ["UpdateNow"] = new()
+            {
+                [Language.English] = "Update now",
+                [Language.Spanish] = "Actualizar ahora",
+                [Language.Portuguese] = "Atualizar agora"
+            },
+            ["ViewOnGitHub"] = new()
+            {
+                [Language.English] = "View on GitHub",
+                [Language.Spanish] = "Ver en GitHub",
+                [Language.Portuguese] = "Ver no GitHub"
+            },
+            ["DownloadingUpdate"] = new()
+            {
+                [Language.English] = "Downloading update...",
+                [Language.Spanish] = "Descargando actualización...",
+                [Language.Portuguese] = "Baixando atualização..."
+            },
+            ["UpdateDownloadProgress"] = new()
+            {
+                [Language.English] = "Downloaded {0}%",
+                [Language.Spanish] = "Descargado {0}%",
+                [Language.Portuguese] = "Baixado {0}%"
+            },
+            ["UpdateDownloadFailed"] = new()
+            {
+                [Language.English] = "The update could not be downloaded. Check your connection and try again.",
+                [Language.Spanish] = "No se pudo descargar la actualización. Revisa tu conexión e inténtalo de nuevo.",
+                [Language.Portuguese] = "Não foi possível baixar a atualização. Verifique sua conexão e tente novamente."
+            },
+            ["UpdateApplyFailed"] = new()
+            {
+                [Language.English] = "The update could not be applied. Open the release on GitHub to install it manually.",
+                [Language.Spanish] = "No se pudo aplicar la actualización. Abre la release en GitHub para instalarla manualmente.",
+                [Language.Portuguese] = "Não foi possível aplicar a atualização. Abra a release no GitHub para instalá-la manualmente."
+            },
+            ["UpdateCheckFailed"] = new()
+            {
+                [Language.English] = "Could not check for updates. Check your internet connection and try again.",
+                [Language.Spanish] = "No se pudieron buscar actualizaciones. Revisa tu conexión e inténtalo de nuevo.",
+                [Language.Portuguese] = "Não foi possível verificar atualizações. Verifique sua conexão e tente novamente."
+            },
+            ["StopActivityBeforeUpdate"] = new()
+            {
+                [Language.English] = "Stop the current activity before updating.",
+                [Language.Spanish] = "Detén la actividad actual antes de actualizar.",
+                [Language.Portuguese] = "Pare a atividade atual antes de atualizar."
+            },
             ["CheckingForUpdates"] = new()
             {
                 [Language.English] = "Checking for updates...",
@@ -352,6 +406,12 @@ namespace DiscordActivityMockV2
                 [Language.English] = "You have the latest version",
                 [Language.Spanish] = "Tienes la última versión",
                 [Language.Portuguese] = "Você tem a versão mais recente"
+            },
+            ["Updates"] = new()
+            {
+                [Language.English] = "Updates",
+                [Language.Spanish] = "Actualizaciones",
+                [Language.Portuguese] = "Atualizações"
             }
         };
 

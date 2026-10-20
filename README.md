@@ -31,7 +31,7 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 - 👁️ **Auto-Hide WordPad** - Automatically hide the WordPad dialog
 - ⏱️ **Auto-Stop Timer** - Set a timer to automatically stop the activity
 - 🌍 **Multi-language Support** - English, Spanish, and Portuguese
-- 🔄 **Update Check** - Detects a newer GitHub release and opens its download page
+- 🔄 **In-app updates** - Checks for new releases at startup and from About, then downloads the package matching the current installation
 
 ## 📸 Screenshots
 
@@ -53,7 +53,9 @@ Each [Release](https://github.com/iiroak/DiscordActivityMock/releases) includes 
 - **Portable `.zip`** — a self-contained application folder with the executable, DLLs, runtimes, and bundled x86 WordPad files. Extract it and run the included executable.
 - **Setup `.exe`** — installs for the current user, adds shortcuts, and provides an uninstaller.
 
-No separate .NET installation is required. The initial window is 860×400 DIPs and scales for the monitor's DPI. Keep the versioned portable executable filename unchanged; WinUI single-file apps require the name they were built with. The app checks for releases but does not install updates automatically.
+No separate .NET installation is required. The initial window is 860×400 DIPs and scales for the monitor's DPI. Keep the versioned portable executable filename unchanged; WinUI single-file apps require the name they were built with. The app checks for releases at startup and from About; choosing Update downloads the matching package and starts the new version.
+
+Version 2.2.3 only opens the release page, so the first update to 2.2.4 must be downloaded there. Updates after 2.2.4 can be downloaded and applied in-app.
 
 ### Usage
 

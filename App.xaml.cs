@@ -43,6 +43,12 @@ namespace DiscordActivityMockV2
         /// <param name="args">Details about the launch request and process.</param>
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
+            if (UpdateChecker.TryRedirectPortableUpdate())
+            {
+                Exit();
+                return;
+            }
+
             _window = new MainWindow();
             _window.Activate();
         }
