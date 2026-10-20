@@ -133,7 +133,7 @@ namespace DiscordActivityMockV2
             _appWindow.Resize(new SizeInt32(initialWidth, initialHeight));
             _appWindow.Move(new PointInt32(
                 workArea.X + Math.Max(0, (workArea.Width - initialWidth) / 2),
-                workArea.Y + Math.Max(0, (workArea.Height - initialHeight) / 2)));
+                workArea.Y));
 
             try
             {

@@ -11,11 +11,7 @@
     Title="Discord Activity Mock V2"
     Closed="Window_Closed">
 
-    <Window.SystemBackdrop>
-        <MicaBackdrop />
-    </Window.SystemBackdrop>
-
-    <Grid x:Name="RootGrid" Padding="0">
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -379,7 +375,7 @@
         <primitives:Popup x:Name="ActivityListPopup" IsLightDismissEnabled="True"
                           PlacementTarget="{Binding ElementName=ActivityListCombo}"
                           DesiredPlacement="BottomEdgeAlignedLeft">
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            <Border Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="8" Padding="2">
                 <ListView x:Name="ActivityPopupList" SelectionMode="Single" IsItemClickEnabled="True"
