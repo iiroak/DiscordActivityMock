@@ -110,6 +110,7 @@ namespace DiscordActivityMockV2
         public MainWindow()
         {
             InitializeComponent();
+            VersionText.Text = $"v{UpdateChecker.GetCurrentVersion()}";
             
             // Detect system language
             Localization.DetectLanguage();
@@ -1824,7 +1825,7 @@ namespace DiscordActivityMockV2
             var dialog = new ContentDialog
             {
                 Title = Localization.Get("AboutTitle"),
-                Content = Localization.Get("AboutContent"),
+                Content = $"{Localization.Get("AboutContent")}\n\n{Localization.Get("VersionLabel", UpdateChecker.GetCurrentVersion())}",
                 PrimaryButtonText = Localization.Get("CheckForUpdates"),
                 CloseButtonText = Localization.Get("OK"),
                 DefaultButton = ContentDialogButton.Primary,

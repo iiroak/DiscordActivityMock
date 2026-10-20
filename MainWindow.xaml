@@ -35,6 +35,8 @@
                     </Border>
                     <TextBlock Text="Discord Activity Mock" FontSize="12" FontWeight="SemiBold" 
                                Foreground="White" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" FontSize="11"
+                               Foreground="#99AAB5" VerticalAlignment="Center"/>
                 </StackPanel>
             </Border>
             

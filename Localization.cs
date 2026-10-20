@@ -209,6 +209,12 @@ namespace DiscordActivityMockV2
                                         "Criado por iroaK\n" +
                                         "Licenciado sob Licença MIT"
             },
+            ["VersionLabel"] = new()
+            {
+                [Language.English] = "Version: {0}",
+                [Language.Spanish] = "Versión: {0}",
+                [Language.Portuguese] = "Versão: {0}"
+            },
             ["OK"] = new()
             {
                 [Language.English] = "OK",
