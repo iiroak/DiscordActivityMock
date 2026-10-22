@@ -514,5 +514,10 @@
         "name": "Resident Evil 2",
         "folder": "RESIDENT EVIL 2  BIOHAZARD RE2",
         "exe": "re2"
+    },
+    {
+        "name": "Resident Evil",
+        "folder": "RE3",
+        "exe": "re3"
     }
 ]
