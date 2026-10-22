@@ -509,5 +509,10 @@
         "name": "Nekome (Demo)",
         "folder": "Nekome",
         "exe": "nekomedemo"
+    },
+    {
+        "name": "Resident Evil 2",
+        "folder": "RESIDENT EVIL 2  BIOHAZARD RE2",
+        "exe": "re2"
     }
 ]
