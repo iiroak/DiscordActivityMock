@@ -519,5 +519,10 @@
         "name": "Resident Evil",
         "folder": "RE3",
         "exe": "re3"
+    },
+    {
+        "name": "Resident Evil 3",
+        "folder": "RE3",
+        "exe": "re3"
     }
 ]
