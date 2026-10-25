@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppExeName
-  #define AppExeName "DiscordActivityMock-v2.2.7-win-x86-Portable.exe"
+  #define AppExeName "DiscordActivityMock-v2.2.8-win-x86-Portable.exe"
 #endif
 
 [Setup]
