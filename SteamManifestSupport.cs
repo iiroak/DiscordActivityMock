@@ -80,12 +80,16 @@ namespace DiscordActivityMockV2
                     throw new IOException($"A directory already exists where Steam expects {manifestFileName}; it was left untouched.");
 
                 bool gameDirectoryExists = Directory.Exists(gameDirectory);
-                bool reusableDirectory = gameDirectoryExists && ContainsOnlyMatchingMockFiles(
-                    gameDirectory, sourceFolder, sourceExecutable, targetExecutableName);
+                bool reusableLegacyMock = gameDirectoryExists && manifestExists &&
+                                          HasLegacyMockSignature(gameDirectory, targetExecutableName);
+                bool reusableDirectory = gameDirectoryExists && (reusableLegacyMock ||
+                    ContainsMatchingMockFiles(
+                        gameDirectory, sourceFolder, sourceExecutable, targetExecutableName,
+                        allowAdditionalFiles: manifestExists));
                 if (gameDirectoryExists && !reusableDirectory)
                 {
                     if (manifestExists)
-                        throw new IOException($"The Steam library already contains {manifest.installDir}. Existing game files were left untouched.");
+                        throw new IOException($"The existing '{manifest.installDir}' folder does not match the activity mock. Existing files were left untouched.");
 
                     continue;
                 }
@@ -114,7 +118,15 @@ namespace DiscordActivityMockV2
                         if (File.Exists(destinationFile))
                         {
                             if (!FilesMatch(sourceFile, destinationFile))
+                            {
+                                // Keep a previously-created WordPad mock working across app
+                                // releases that bundle a different WordPad binary. Never replace
+                                // existing files in a Steam library during this migration.
+                                if (reusableLegacyMock)
+                                    continue;
+
                                 throw new IOException($"The existing Steam file '{destinationRelativePath}' does not match the temporary mock executable and was left untouched.");
+                            }
                             continue;
                         }
 
@@ -248,11 +260,12 @@ namespace DiscordActivityMockV2
             return null;
         }
 
-        private static bool ContainsOnlyMatchingMockFiles(
+        private static bool ContainsMatchingMockFiles(
             string destinationFolder,
             string sourceFolder,
             string sourceExecutable,
-            string targetExecutableName)
+            string targetExecutableName,
+            bool allowAdditionalFiles)
         {
             string[] sourceFiles = Directory.GetFiles(sourceFolder, "*", SearchOption.AllDirectories);
             var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -275,22 +288,76 @@ namespace DiscordActivityMockV2
             foreach (string destinationDirectory in Directory.GetDirectories(destinationFolder, "*", SearchOption.AllDirectories))
             {
                 string relativeDirectory = Path.GetRelativePath(destinationFolder, destinationDirectory);
-                if (!expectedDirectories.Contains(relativeDirectory))
+                if (!allowAdditionalFiles && !expectedDirectories.Contains(relativeDirectory))
                     return false;
             }
 
             string[] destinationFiles = Directory.GetFiles(destinationFolder, "*", SearchOption.AllDirectories);
-            if (destinationFiles.Length > expected.Count)
+            if (!allowAdditionalFiles && destinationFiles.Length > expected.Count)
                 return false;
 
             foreach (string destinationFile in destinationFiles)
             {
                 string relativePath = Path.GetRelativePath(destinationFolder, destinationFile);
-                if (!expected.TryGetValue(relativePath, out string? sourceFile) ||
-                    !FilesMatch(sourceFile, destinationFile))
+                if (!expected.TryGetValue(relativePath, out string? sourceFile))
+                {
+                    if (allowAdditionalFiles)
+                        continue;
+                    return false;
+                }
+
+                if (!FilesMatch(sourceFile, destinationFile))
                     return false;
             }
-            return true;
+
+            string mockExecutable = targetExecutableName + ".exe";
+            return expected.TryGetValue(mockExecutable, out string? expectedExecutable) &&
+                   File.Exists(Path.Combine(destinationFolder, mockExecutable)) &&
+                   FilesMatch(expectedExecutable, Path.Combine(destinationFolder, mockExecutable));
+        }
+
+        private static bool HasLegacyMockSignature(string destinationFolder, string targetExecutableName)
+        {
+            string mockExecutablePath = Path.Combine(destinationFolder, targetExecutableName + ".exe");
+            string wordPadFilterPath = Path.Combine(destinationFolder, "WordpadFilter.dll");
+            if (!File.Exists(wordPadFilterPath) || !IsPortableExecutable(mockExecutablePath))
+                return false;
+
+            string[] existingFiles = Directory.GetFiles(destinationFolder, "*", SearchOption.AllDirectories);
+            return existingFiles.Length == 2 &&
+                   existingFiles.Any(path => string.Equals(Path.GetFullPath(path), Path.GetFullPath(mockExecutablePath), StringComparison.OrdinalIgnoreCase)) &&
+                   existingFiles.Any(path => string.Equals(Path.GetFullPath(path), Path.GetFullPath(wordPadFilterPath), StringComparison.OrdinalIgnoreCase)) &&
+                   Directory.GetDirectories(destinationFolder, "*", SearchOption.AllDirectories).Length == 0;
+        }
+
+        private static bool IsPortableExecutable(string path)
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                if (stream.Length < 64)
+                    return false;
+
+                using var reader = new BinaryReader(stream);
+                if (reader.ReadUInt16() != 0x5A4D)
+                    return false;
+
+                stream.Position = 0x3C;
+                int peOffset = reader.ReadInt32();
+                if (peOffset < 0 || peOffset > stream.Length - sizeof(uint))
+                    return false;
+
+                stream.Position = peOffset;
+                return reader.ReadUInt32() == 0x00004550;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
 
         private static string GetDestinationRelativePath(
