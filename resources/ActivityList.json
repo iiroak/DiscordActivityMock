@@ -529,5 +529,10 @@
         "name": "Resident Evil 7: Biohazard",
         "folder": "steamapps/common/RESIDENT EVIL 7 biohazard",
         "exe": "re7"
+    },
+    {
+        "name": "MapleStory Classic World",
+        "folder": "MapleStory",
+        "exe": "MapleStory"
     }
 ]
