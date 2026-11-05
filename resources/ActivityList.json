@@ -534,5 +534,10 @@
         "name": "MapleStory Classic World",
         "folder": "MapleStory",
         "exe": "MapleStory"
+    },
+    {
+        "name": "WORLD OF WARCRAFT: FOREVER",
+        "folder": "_forever_",
+        "exe": "wow"
     }
 ]
