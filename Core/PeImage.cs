@@ -19,21 +19,21 @@ namespace DiscordActivityMockV2
         public static ushort ReadMachine(Stream stream)
         {
             if (stream.Length < 64)
-                throw new InvalidDataException("The WordPad executable is not a valid Windows application.");
+                throw new InvalidDataException(Localization.Get("PeNotWindowsApp"));
 
             using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
             stream.Position = 0;
             if (reader.ReadUInt16() != DosSignature)
-                throw new InvalidDataException("The WordPad executable is not a valid Windows application.");
+                throw new InvalidDataException(Localization.Get("PeNotWindowsApp"));
 
             stream.Position = PeOffsetPosition;
             int peOffset = reader.ReadInt32();
             if (peOffset < 0 || peOffset > stream.Length - 6)
-                throw new InvalidDataException("The WordPad executable has an invalid PE header.");
+                throw new InvalidDataException(Localization.Get("PeInvalidHeader"));
 
             stream.Position = peOffset;
             if (reader.ReadUInt32() != PeSignature)
-                throw new InvalidDataException("The WordPad executable has an invalid PE signature.");
+                throw new InvalidDataException(Localization.Get("PeInvalidSignature"));
 
             return reader.ReadUInt16();
         }
@@ -57,17 +57,17 @@ namespace DiscordActivityMockV2
         public static void ValidateWordPadExecutable(string executablePath)
         {
             if (!File.Exists(executablePath))
-                throw new FileNotFoundException("WordPad executable was not found in the source files.", executablePath);
+                throw new FileNotFoundException(Localization.Get("WordPadExeMissing"), executablePath);
 
             ushort machine;
             using (FileStream stream = File.OpenRead(executablePath))
                 machine = ReadMachine(stream);
 
             if (machine is not (MachineI386 or MachineAmd64))
-                throw new InvalidDataException("This WordPad copy must be an x86 or x64 executable.");
+                throw new InvalidDataException(Localization.Get("PeUnsupportedMachine"));
 
             if (machine == MachineAmd64 && RuntimeInformation.OSArchitecture == Architecture.X86)
-                throw new PlatformNotSupportedException("This WordPad copy requires 64-bit Windows.");
+                throw new PlatformNotSupportedException(Localization.Get("PeRequires64Bit"));
         }
     }
 }

@@ -2,16 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -22,15 +21,18 @@ namespace DiscordActivityMockV2
 {
     public sealed partial class MainWindow : Window
     {
-        // Win32 API for hiding windows
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         [DllImport("user32.dll")]
         private static extern uint GetDpiForWindow(IntPtr hWnd);
-        
+
         private const int SW_HIDE = 0;
-        
+        private const int SW_MINIMIZE = 6;
+        private const int MaxCatalogBytes = 2 * 1024 * 1024;
+        private const string DefaultCustomFolder = "Accessories";
+        private const string DefaultCustomExe = "M1-Win64-Shipping";
+
         private static readonly string settingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DiscordActivityMock", "settings.json");
@@ -39,8 +41,9 @@ namespace DiscordActivityMockV2
 
         private static readonly string githubActivityList = "https://raw.githubusercontent.com/iiroak/DiscordActivityMock/refs/heads/main/resources/ActivityList.json";
         private static readonly HttpClient activityHttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
-        
-        private string? _originalWordPadPath;  // Path to original WordPad backup
+
+        // Private WordPad session in %TEMP%\DiscordActivityMock\Sessions\<guid>
+        private string? _originalWordPadPath;  // Original WordPad copy inside the session
         private string? _sessionRootPath;
         private FileStream? _sessionLock;
         private string? _workingRootPath;
@@ -48,60 +51,66 @@ namespace DiscordActivityMockV2
         private string? _currentExePath;       // Current executable path
         private string _lastFolderName = "";   // Last folder name used
         private string _lastExeName = "";      // Last exe name used
+
+        // Activity list
         private ActivityItem[]? _downloadedActivities;
+        private List<ActivityOption> _activityOptions = new();
+        private bool _hasAppliedOption;
+        private bool _appliedIsCustom;
+        private ActivityItem? _appliedActivity;
+        private string _customFolderText = DefaultCustomFolder;
+        private string _customExeText = DefaultCustomExe;
+        private bool _isCustomActivity;
+
+        // Activity process and state
         private Process? _runningProcess;
-        private bool _isActivityRunning = false;
-        private bool _isStarting = false;
-        private bool _isCustomActivity = false;
-        
-        // Timer for tracking activity duration
-        private DispatcherTimer? _activityTimer;
-        private DateTime _activityStartTime;
-        
-        // Auto-stop timer
-        private DispatcherTimer? _autoStopTimer;
-        private bool _autoStopEnabled = false;
-        private int _autoStopMinutes = 30;
+        private bool _isActivityRunning;
+        private bool _isStarting;
+        private bool _isPreparingWordPad;
+        private bool _isCatalogLoading;
         private CancellationTokenSource? _hideCancellation;
         private long _activitySessionId;
         private readonly CancellationTokenSource _windowLifetime = new();
         private readonly SemaphoreSlim _dialogSemaphore = new(1, 1);
-        
-        // Hide settings
+
+        // Elapsed time and auto-stop
+        private readonly DispatcherTimer _activityTimer;
+        private readonly DispatcherTimer _autoStopTimer;
+        private readonly Stopwatch _activityStopwatch = new();
+        private readonly SolidColorBrush _runningBrush;
+        private readonly SolidColorBrush _inactiveBrush;
+
+        // Settings
+        private bool _autoStopEnabled = false;
+        private int _autoStopMinutes = 30;
         private bool _hideEnabled = true;
         private int _hideDelaySeconds = 15;
-        
-        // Settings
         private bool _dontShowStartWarning = false;
-        
-        // Window management
-        private AppWindow? _appWindow;
-        private IntPtr _hwnd;
         private bool _isDarkTheme = true;
+
+        // Window management
+        private readonly AppWindow _appWindow;
+        private readonly IntPtr _hwnd;
         private bool _isInitializing = true;
         private bool _isWindowClosed;
-        private bool _startupUpdateCheckStarted;
+        private bool _startupWorkStarted;
 
         public MainWindow()
         {
             InitializeComponent();
-            VersionText.Text = $"v{UpdateChecker.GetCurrentVersion()}";
-            
-            // Detect system language
             Localization.DetectLanguage();
-            
-            // Load saved settings
+
+            _runningBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 67, 181, 129));
+            _inactiveBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 153, 170, 181));
+            VersionText.Text = $"v{UpdateChecker.GetCurrentVersion()}";
+
             LoadSettings();
-            
-            // Initialize activity timer
-            _activityTimer = new DispatcherTimer();
-            _activityTimer.Interval = TimeSpan.FromSeconds(1);
+
+            _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _activityTimer.Tick += ActivityTimer_Tick;
-            
-            // Initialize auto-stop timer
             _autoStopTimer = new DispatcherTimer();
             _autoStopTimer.Tick += AutoStopTimer_Tick;
-            
+
             // AppWindow.Resize uses physical pixels; convert the desired 860x400 DIPs at this monitor's DPI.
             _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var windowId = Win32Interop.GetWindowIdFromWindow(_hwnd);
@@ -118,6 +127,7 @@ namespace DiscordActivityMockV2
             _appWindow.Move(new PointInt32(
                 workArea.X + Math.Max(0, (workArea.Width - initialWidth) / 2),
                 workArea.Y + Math.Max(0, (workArea.Height - initialHeight) / 2)));
+            _appWindow.Changed += AppWindow_Changed;
 
             try
             {
@@ -133,36 +143,33 @@ namespace DiscordActivityMockV2
             {
                 AppLog.Error("Load application logo", ex);
             }
-            
-            // Setup custom titlebar (fully custom, hide system buttons)
+
             SetupCustomTitleBar();
-            
-            // Initialize UI
-            ActivityListCombo.Items.Add("Custom Activity");
-            ActivityListCombo.SelectedIndex = 0;
-            RefreshActivityPopupItems();
-            
-            // Apply loaded settings to UI
-            ApplyLoadedSettings();
-            
-            // Apply localization to UI
             ApplyLocalization();
 
+            // Only the custom activity is listed until a catalog is loaded.
+            PopulateActivityList();
+
+            ApplyLoadedSettings();
+            UpdateMaximizeButton();
+            UpdateControlStates();
+
             _isInitializing = false;
-            
         }
 
         private void RootGrid_Loaded(object sender, RoutedEventArgs e)
         {
-            if (_startupUpdateCheckStarted)
+            if (_startupWorkStarted)
                 return;
 
-            _startupUpdateCheckStarted = true;
+            _startupWorkStarted = true;
             string currentVersion = AppVersion.Current;
             string? processPath = Environment.ProcessPath;
             _ = Task.Run(() => StartupCleanup.Run(currentVersion, processPath, tempSessionsPath));
             _ = CheckForUpdatesAsync();
         }
+
+        #region Updates
 
         private async Task CheckForUpdatesAsync(bool showResultWhenCurrent = false)
         {
@@ -198,7 +205,7 @@ namespace DiscordActivityMockV2
                     CloseButtonText = Localization.Get("Later"),
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = this.Content.XamlRoot,
-                    RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                    RequestedTheme = CurrentElementTheme
                 };
 
                 ContentDialogResult? result = await ShowContentDialogAsync(dialog);
@@ -264,7 +271,7 @@ namespace DiscordActivityMockV2
                 Content = new StackPanel { Spacing = 8, Children = { progressText, progressBar } },
                 CloseButtonText = Localization.Get("Cancel"),
                 XamlRoot = this.Content.XamlRoot,
-                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                RequestedTheme = CurrentElementTheme
             };
 
             Task<ContentDialogResult?> dialogTask = ShowContentDialogAsync(progressDialog);
@@ -296,7 +303,7 @@ namespace DiscordActivityMockV2
                     CloseButtonText = Localization.Get("Cancel"),
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = this.Content.XamlRoot,
-                    RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                    RequestedTheme = CurrentElementTheme
                 };
                 if (await ShowContentDialogAsync(integrityDialog) == ContentDialogResult.Primary)
                     UpdateChecker.OpenReleasePage(update.ReleaseUrl);
@@ -372,225 +379,234 @@ namespace DiscordActivityMockV2
             }
         }
 
+        #endregion
+
+        #region Window, theme and localization
+
+        private ElementTheme CurrentElementTheme => _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light;
+
         private void SetupCustomTitleBar()
         {
-            // Extend content into titlebar and hide the default caption buttons
+            // Extend content into the title bar and hide the default caption buttons.
             ExtendsContentIntoTitleBar = true;
-            
-            // Set the draggable area (the TitleBarBorder element)
             SetTitleBar(TitleBarBorder);
-            
-            // Get the presenter and configure it
-            if (_appWindow != null)
-            {
-                var presenter = _appWindow.Presenter as OverlappedPresenter;
-                if (presenter != null)
-                {
-                    // This removes the default caption buttons entirely
-                    presenter.SetBorderAndTitleBar(true, false);
-                }
-            }
+
+            if (_appWindow.Presenter is OverlappedPresenter presenter)
+                presenter.SetBorderAndTitleBar(true, false);
         }
 
         private void ApplyLocalization()
         {
+            Title = Localization.Get("WindowTitle");
+            AppTitleText.Text = Localization.Get("WindowTitle");
+
             // Step titles
             Step1TitleText.Text = Localization.Get("Step1Title");
             Step2TitleText.Text = Localization.Get("Step2Title");
             Step3TitleText.Text = Localization.Get("Step3Title");
-            
-            // Buttons
+
+            // Step 1
             CopyFromSystemText.Text = Localization.Get("CopyFromSystem");
             BundledWordPadText.Text = Localization.Get("BundledBackup");
-            StartBtnText.Text = Localization.Get("Start");
-            StopBtnText.Text = Localization.Get("Stop");
-            
-            // Search placeholder
-            ActivitySearchBox.PlaceholderText = Localization.Get("Search");
-            
-            // Status bar
             WordPadStatusBar.Title = Localization.Get("Status");
             WordPadStatusBar.Message = Localization.Get("SelectOptionAbove");
-            
+
+            // Step 2
+            ActivitySearchBox.PlaceholderText = Localization.Get("Search");
+            SetToolTip(FetchActivitiesBtn, Localization.Get("ReloadActivityList"));
+            AutomationProperties.SetName(ActivityListButton, Localization.Get("SelectActivity"));
+            FolderNameTxt.Header = Localization.Get("FolderHeader");
+            FileExeTxt.Header = Localization.Get("ExeHeader");
+            SetToolTip(ClearBtn, Localization.Get("Clear"));
+
+            // Step 3
+            StartBtnText.Text = Localization.Get("Start");
+            StopBtnText.Text = Localization.Get("Stop");
+            SetToolTip(HideSettingsBtn, Localization.Get("HideSettings"));
+            HideFlyoutTitle.Text = Localization.Get("HideWordPad");
+            HideWordPadCheck.Content = Localization.Get("EnableHide");
+            HideDelayLabel.Text = Localization.Get("Delay");
+            HideDelayUnit.Text = Localization.Get("SecondsUnit");
+            HideDelayHelpText.Text = Localization.Get("HideDelayHelp");
+            SetToolTip(TimerSettingsBtn, Localization.Get("TimerSettings"));
+            TimerFlyoutTitle.Text = Localization.Get("AutoStop");
+            AutoStopCheck.Content = Localization.Get("EnableAutoStop");
+            AutoStopLabel.Text = Localization.Get("StopAfter");
+            AutoStopUnit.Text = Localization.Get("MinutesUnit");
+            AutoStopMaxText.Text = Localization.Get("AutoStopMax");
+
+            // Title bar buttons
+            SetToolTip(MinimizeBtn, Localization.Get("Minimize"));
+            SetToolTip(CloseBtn, Localization.Get("Close"));
+            AutomationProperties.SetName(ThemeToggle, Localization.Get("DarkTheme"));
+
             // Footer
             GitHubBtnText.Text = Localization.Get("GitHub");
             AboutBtnText.Text = Localization.Get("About");
             MadeWithText.Text = Localization.Get("MadeWith");
             ByText.Text = Localization.Get("By");
-            
-            // Tooltips
-            InfoBtn.SetValue(ToolTipService.ToolTipProperty, Localization.Get("About"));
+            SetToolTip(InfoBtn, Localization.Get("About"));
+        }
+
+        /// <summary>Sets the tooltip and the accessible name, so icon-only buttons are announced by screen readers.</summary>
+        private static void SetToolTip(FrameworkElement element, string text)
+        {
+            ToolTipService.SetToolTip(element, text);
+            AutomationProperties.SetName(element, text);
         }
 
         private void Window_Closed(object sender, WindowEventArgs args)
         {
             _isWindowClosed = true;
             _windowLifetime.Cancel();
+            _appWindow.Changed -= AppWindow_Changed;
+            _activityTimer.Stop();
+            _autoStopTimer.Stop();
             StopRunningProcess();
             if (!_isActivityRunning)
                 CleanTemporaryFiles();
         }
-        
-        #region Window Controls
-        
+
         private void MinimizeBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_appWindow != null)
-            {
-                // Use Win32 to minimize
-                ShowWindow(_hwnd, 6); // SW_MINIMIZE = 6
-            }
+            ShowWindow(_hwnd, SW_MINIMIZE);
         }
-        
+
         private void MaximizeBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_appWindow != null)
+            if (_appWindow.Presenter is OverlappedPresenter overlapped)
             {
-                if (_appWindow.Presenter.Kind == AppWindowPresenterKind.Overlapped)
-                {
-                    var overlapped = _appWindow.Presenter as OverlappedPresenter;
-                    if (overlapped != null)
-                    {
-                        if (overlapped.State == OverlappedPresenterState.Maximized)
-                        {
-                            overlapped.Restore();
-                            MaximizeIcon.Glyph = "\uE922"; // Maximize icon
-                        }
-                        else
-                        {
-                            overlapped.Maximize();
-                            MaximizeIcon.Glyph = "\uE923"; // Restore icon
-                        }
-                    }
-                }
+                if (overlapped.State == OverlappedPresenterState.Maximized)
+                    overlapped.Restore();
+                else
+                    overlapped.Maximize();
             }
+            UpdateMaximizeButton();
         }
-        
+
+        /// <summary>Double-clicking the title bar or Win+Up also maximizes; keep the button icon in sync.</summary>
+        private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
+        {
+            if (!_isWindowClosed && (args.DidPresenterChange || args.DidSizeChange))
+                UpdateMaximizeButton();
+        }
+
+        private void UpdateMaximizeButton()
+        {
+            bool maximized = _appWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+            MaximizeIcon.Glyph = maximized ? "\uE923" : "\uE922"; // Restore or Maximize icon
+            SetToolTip(MaximizeBtn, Localization.Get(maximized ? "Restore" : "Maximize"));
+        }
+
         private void CloseBtn_Click(object sender, RoutedEventArgs e)
         {
             Close();
         }
-        
+
         private void ThemeToggle_Toggled(object sender, RoutedEventArgs e)
         {
             _isDarkTheme = ThemeToggle.IsOn;
             ApplyTheme(_isDarkTheme);
             SaveSettings();
         }
-        
+
         private void ApplyTheme(bool isDark)
         {
             if (RootGrid != null)
-            {
                 RootGrid.RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light;
-            }
-            
-            // Update titlebar colors
+
+            // The custom title bar uses fixed colors, so update them for each theme.
+            Windows.UI.Color primary = isDark ? Windows.UI.Color.FromArgb(255, 255, 255, 255) : Windows.UI.Color.FromArgb(255, 31, 35, 40);
+            Windows.UI.Color secondary = isDark ? Windows.UI.Color.FromArgb(255, 153, 170, 181) : Windows.UI.Color.FromArgb(255, 80, 80, 80);
+            var secondaryBrush = new SolidColorBrush(secondary);
+
             if (TitleBarGrid != null)
             {
                 TitleBarGrid.Background = new SolidColorBrush(
                     isDark ? Windows.UI.Color.FromArgb(255, 26, 27, 38) : Windows.UI.Color.FromArgb(255, 240, 240, 245));
             }
-            
-            // Update theme icon
+            if (AppTitleText != null)
+                AppTitleText.Foreground = new SolidColorBrush(primary);
+            if (VersionText != null)
+                VersionText.Foreground = secondaryBrush;
+            if (MinimizeIcon != null)
+                MinimizeIcon.Foreground = secondaryBrush;
+            if (MaximizeIcon != null)
+                MaximizeIcon.Foreground = secondaryBrush;
+            if (CloseIcon != null)
+                CloseIcon.Foreground = secondaryBrush;
             if (ThemeIcon != null)
             {
                 ThemeIcon.Glyph = isDark ? "\uE793" : "\uE706"; // Moon or Sun
-                ThemeIcon.Foreground = new SolidColorBrush(
-                    isDark ? Windows.UI.Color.FromArgb(255, 153, 170, 181) : Windows.UI.Color.FromArgb(255, 80, 80, 80));
+                ThemeIcon.Foreground = secondaryBrush;
             }
         }
-        
+
         #endregion
 
-        #region UI Toggle Helpers
+        #region Control state
 
-        private void ToggleStep2(bool enabled)
-        {
-            ActivityListCombo.IsEnabled = enabled;
-            ActivityListButton.IsEnabled = enabled;
-            FetchActivitiesBtn.IsEnabled = enabled;
-            ActivitySearchBox.IsEnabled = enabled && _downloadedActivities != null && _downloadedActivities.Length > 0;
-            
-            // Enable controls when WordPad is ready
-            bool wordPadReady = !string.IsNullOrEmpty(_currentExePath);
-            HideSettingsBtn.IsEnabled = wordPadReady;
-            TimerSettingsBtn.IsEnabled = wordPadReady;
-            
-            // Enable Start button when WordPad is ready and activity not running
-            StartActivityBtn.IsEnabled = enabled && wordPadReady && !_isActivityRunning;
-        }
-        private void ToggleStep21(bool enabled, bool isCustomActivity = false)
-        {
-            _isCustomActivity = isCustomActivity;
-            bool wordPadReady = !string.IsNullOrEmpty(_currentExePath);
-            FolderNameTxt.IsEnabled = enabled && isCustomActivity && !_isActivityRunning;
-            FileExeTxt.IsEnabled = enabled && isCustomActivity && !_isActivityRunning;
-            ClearBtn.IsEnabled = enabled && isCustomActivity && !_isActivityRunning;
-            StartActivityBtn.IsEnabled = enabled && !_isActivityRunning && wordPadReady;
-            HideSettingsBtn.IsEnabled = wordPadReady;
-        }
-
-        private void SetLoading(bool isLoading)
-        {
-            LoadingRing.IsActive = isLoading;
-            WordPadSystemBtn.IsEnabled = !isLoading;
-            BundledWordPadBtn.IsEnabled = !isLoading;
-        }
-
-        private void UpdateActivityControls()
+        /// <summary>The single place that decides which controls are enabled.</summary>
+        private void UpdateControlStates()
         {
             if (_isWindowClosed)
                 return;
 
+            bool activityBusy = _isActivityRunning || _isStarting;
+            bool sourceBusy = activityBusy || _isPreparingWordPad;
             bool wordPadReady = !string.IsNullOrEmpty(_currentExePath);
-            StartActivityBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
+            bool canConfigure = wordPadReady && !sourceBusy;
+            bool canChangeActivity = canConfigure && !_isCatalogLoading;
+            bool hasCatalog = _downloadedActivities is { Length: > 0 };
+            bool canEditCustom = canConfigure && _isCustomActivity;
+
+            WordPadSystemBtn.IsEnabled = !sourceBusy;
+            BundledWordPadBtn.IsEnabled = !sourceBusy;
+
+            ActivityListCombo.IsEnabled = canChangeActivity;
+            ActivityListButton.IsEnabled = canChangeActivity;
+            FetchActivitiesBtn.IsEnabled = canChangeActivity;
+            ActivitySearchBox.IsEnabled = canChangeActivity && hasCatalog;
+            FolderNameTxt.IsEnabled = canEditCustom;
+            FileExeTxt.IsEnabled = canEditCustom;
+            ClearBtn.IsEnabled = canEditCustom;
+
+            HideSettingsBtn.IsEnabled = canConfigure;
+            TimerSettingsBtn.IsEnabled = canConfigure;
+            StartActivityBtn.IsEnabled = canConfigure;
             StopActivityBtn.IsEnabled = _isActivityRunning;
-            FolderNameTxt.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
-            FileExeTxt.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
-            ClearBtn.IsEnabled = !_isActivityRunning && !_isStarting && _isCustomActivity;
-            ActivityListCombo.IsEnabled = !_isActivityRunning && !_isStarting;
-            ActivityListButton.IsEnabled = !_isActivityRunning && !_isStarting;
-            ActivitySearchBox.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
-            FetchActivitiesBtn.IsEnabled = !_isActivityRunning && !_isStarting && wordPadReady;
-            WordPadSystemBtn.IsEnabled = !_isActivityRunning && !_isStarting;
-            BundledWordPadBtn.IsEnabled = !_isActivityRunning && !_isStarting;
-            HideSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
-            TimerSettingsBtn.IsEnabled = wordPadReady && !_isActivityRunning && !_isStarting;
-            
-            // Update status indicator
-            if (_isActivityRunning)
-            {
-                StatusIndicator.Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 67, 181, 129)); // Green
-                StatusText.Text = "Running";
-            }
-            else
-            {
-                StatusIndicator.Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 153, 170, 181)); // Gray
-                StatusText.Text = "Inactive";
-            }
+
+            LoadingRing.IsActive = _isPreparingWordPad || _isCatalogLoading;
+            StatusIndicator.Fill = _isActivityRunning ? _runningBrush : _inactiveBrush;
+            StatusText.Text = Localization.Get(_isActivityRunning ? "Running" : "Inactive");
         }
-        
+
         private void ActivityTimer_Tick(object? sender, object e)
         {
-            var elapsed = DateTime.Now - _activityStartTime;
-            TimerText.Text = elapsed.ToString(@"hh\:mm\:ss");
+            TimerText.Text = ActivityRules.FormatElapsed(_activityStopwatch.Elapsed);
         }
-        
+
+        private void ResetActivityTimers()
+        {
+            _activityTimer.Stop();
+            _autoStopTimer.Stop();
+            _activityStopwatch.Reset();
+            TimerText.Text = ActivityRules.FormatElapsed(TimeSpan.Zero);
+        }
+
         private void AutoStopTimer_Tick(object? sender, object e)
         {
-            _autoStopTimer?.Stop();
+            _autoStopTimer.Stop();
             if (StopRunningProcess())
             {
-                _activityTimer?.Stop();
-                TimerText.Text = "00:00:00";
+                ResetActivityTimers();
             }
             else
             {
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "Windows could not stop the activity process.";
+                WordPadStatusBar.Message = Localization.Get("StopProcessFailed");
             }
-            UpdateActivityControls();
+            UpdateControlStates();
         }
 
         #endregion
@@ -621,7 +637,7 @@ namespace DiscordActivityMockV2
                 AppLog.Error("Load settings", ex);
             }
         }
-        
+
         private void SaveSettings()
         {
             if (_isInitializing)
@@ -639,13 +655,13 @@ namespace DiscordActivityMockV2
                     DontShowStartWarning = _dontShowStartWarning,
                     IsDarkTheme = _isDarkTheme
                 };
-                
+
                 string? dir = Path.GetDirectoryName(settingsPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 {
                     Directory.CreateDirectory(dir);
                 }
-                
+
                 string json = JsonSerializer.Serialize(settings, AppJsonContext.Default.AppSettings);
                 tempPath = settingsPath + ".tmp";
                 File.WriteAllText(tempPath, json);
@@ -663,14 +679,11 @@ namespace DiscordActivityMockV2
                 }
             }
         }
-        
+
         private void ApplyLoadedSettings()
         {
-            // Apply theme
             ThemeToggle.IsOn = _isDarkTheme;
             ApplyTheme(_isDarkTheme);
-            
-            // Update status texts
             UpdateHideStatusText();
             UpdateTimerStatusText();
         }
@@ -776,10 +789,19 @@ namespace DiscordActivityMockV2
             if (!Directory.Exists(extractionRoot))
                 return null;
 
-            return Directory.GetDirectories(extractionRoot)
-                .OrderByDescending(Directory.GetLastWriteTimeUtc)
-                .Select(directory => Path.Combine(directory, relativePath))
-                .FirstOrDefault(File.Exists);
+            string? newestMatch = null;
+            DateTime newestTime = DateTime.MinValue;
+            foreach (string directory in Directory.GetDirectories(extractionRoot))
+            {
+                string candidate = Path.Combine(directory, relativePath);
+                DateTime writeTime = Directory.GetLastWriteTimeUtc(directory);
+                if (File.Exists(candidate) && writeTime >= newestTime)
+                {
+                    newestMatch = candidate;
+                    newestTime = writeTime;
+                }
+            }
+            return newestMatch;
         }
 
         /// <summary>
@@ -823,9 +845,9 @@ namespace DiscordActivityMockV2
             {
                 Title = title,
                 Content = message,
-                CloseButtonText = "OK",
+                CloseButtonText = Localization.Get("OK"),
                 XamlRoot = this.Content.XamlRoot,
-                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                RequestedTheme = CurrentElementTheme
             };
             await ShowContentDialogAsync(dialog);
         }
@@ -872,45 +894,45 @@ namespace DiscordActivityMockV2
                     Path.GetDirectoryName(sourceMuiPath)!,
                     targetExecutableName + ".exe.mui");
                 if (File.Exists(targetMuiPath))
-                    throw new IOException("The target executable's localized resource file already exists.");
+                    throw new IOException(Localization.Get("MuiExists"));
                 File.Move(sourceMuiPath, targetMuiPath);
             }
         }
-        
+
         private async Task<bool> ShowStartWarningDialog()
         {
             var dontShowCheckBox = new CheckBox
             {
                 Content = Localization.Get("DontShowAgain")
             };
-            
+
             var contentPanel = new StackPanel
             {
                 Spacing = 12
             };
-            
+
             contentPanel.Children.Add(new TextBlock
             {
                 Text = Localization.Get("WarningMessage1"),
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
+                TextWrapping = TextWrapping.Wrap
             });
-            
+
             contentPanel.Children.Add(new TextBlock
             {
                 Text = Localization.Get("WarningMessage2"),
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 153, 170, 181))
             });
-            
+
             contentPanel.Children.Add(new TextBlock
             {
                 Text = Localization.Get("WarningMessage3"),
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 250, 166, 26))
             });
-            
+
             contentPanel.Children.Add(dontShowCheckBox);
-            
+
             var dialog = new ContentDialog
             {
                 Title = Localization.Get("BeforeStarting"),
@@ -919,17 +941,17 @@ namespace DiscordActivityMockV2
                 CloseButtonText = Localization.Get("Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot,
-                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                RequestedTheme = CurrentElementTheme
             };
-            
+
             var result = await ShowContentDialogAsync(dialog);
-            
+
             if (dontShowCheckBox.IsChecked == true)
             {
                 _dontShowStartWarning = true;
                 SaveSettings();
             }
-            
+
             return result == ContentDialogResult.Primary;
         }
 
@@ -937,203 +959,158 @@ namespace DiscordActivityMockV2
 
         #region Step 1: Copy or Prepare Bundled WordPad
 
-        private async Task<string> CopyWordPadFolder()
+        private async void WordPadSystemBtn_Click(object sender, RoutedEventArgs e) =>
+            await PrepareWordPadAsync(CopySystemWordPad, "Copy system WordPad", "WordPadUnavailable");
+
+        private async void WordPadBundledBtn_Click(object sender, RoutedEventArgs e) =>
+            await PrepareWordPadAsync(CopyBundledWordPad, "Prepare bundled x86 WordPad", "BundledWordPadUnavailable");
+
+        /// <summary>Creates a new private session with a WordPad copy, then loads the activity catalog.</summary>
+        private async Task PrepareWordPadAsync(Func<string> copyWordPad, string operation, string failureTitleKey)
+        {
+            if (_isWindowClosed || _isPreparingWordPad)
+                return;
+
+            if (_isActivityRunning || _isStarting)
+            {
+                await ShowDialogAsync(Localization.Get("ActivityRunningTitle"), Localization.Get("StopBeforeChangingSource"));
+                return;
+            }
+
+            _isPreparingWordPad = true;
+            UpdateControlStates();
+            bool ready = false;
+            try
+            {
+                CleanTemporaryFiles();
+                WordPadStatusBar.Severity = InfoBarSeverity.Informational;
+                WordPadStatusBar.Message = Localization.Get("PreparingWordPad");
+
+                SetupWordPadPaths(copyWordPad());
+                WordPadStatusBar.Severity = InfoBarSeverity.Success;
+                WordPadStatusBar.Message = Localization.Get("WordPadReady");
+                ready = true;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error(operation, ex);
+                CleanTemporaryFiles();
+                WordPadStatusBar.Severity = InfoBarSeverity.Error;
+                WordPadStatusBar.Message = Localization.Get("WordPadSetupFailed");
+                await ShowDialogAsync(Localization.Get(failureTitleKey), ex.Message);
+            }
+            finally
+            {
+                _isPreparingWordPad = false;
+                UpdateControlStates();
+            }
+
+            if (ready)
+                await AutoFetchActivities();
+        }
+
+        private string CopySystemWordPad()
         {
             string programFiles = Environment.GetEnvironmentVariable("ProgramW6432") ??
                                   Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string pathWordPad = Path.Combine(programFiles, "Windows NT", "Accessories");
-            
-            try
-            {
-                CleanTemporaryFiles();
-                if (!Directory.Exists(pathWordPad) || !File.Exists(Path.Combine(pathWordPad, "wordpad.exe")))
-                    throw new FileNotFoundException("WordPad was removed from this Windows installation.");
+            if (!Directory.Exists(pathWordPad) || !File.Exists(Path.Combine(pathWordPad, "wordpad.exe")))
+                throw new FileNotFoundException(Localization.Get("WordPadNotFound"));
 
-                string backupPath = Path.Combine(CreateSessionRoot(), "Original");
-                Directory.CreateDirectory(backupPath);
-                
-                CopyWordPadFiles(pathWordPad, backupPath);
-
-                PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
-                return backupPath;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Copy WordPad", ex);
-                CleanTemporaryFiles();
-                await ShowDialogAsync("WordPad unavailable", ex.Message);
-                return "";
-            }
+            string backupPath = Path.Combine(CreateSessionRoot(), "Original");
+            Directory.CreateDirectory(backupPath);
+            CopyWordPadFiles(pathWordPad, backupPath);
+            PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
+            return backupPath;
         }
 
-        private async Task<string> PrepareBundledWordPadAsync()
+        private string CopyBundledWordPad()
         {
-            try
+            string backupPath = Path.Combine(CreateSessionRoot(), "Original");
+            Directory.CreateDirectory(backupPath);
+            foreach (string fileName in new[] { "wordpad.exe", "WordpadFilter.dll" })
             {
-                CleanTemporaryFiles();
-                string sessionRoot = CreateSessionRoot();
-                string backupPath = Path.Combine(sessionRoot, "Original");
-                Directory.CreateDirectory(backupPath);
+                string? sourceFile = ResolveBundledAssetPath(Path.Combine("resources", fileName));
+                if (sourceFile == null)
+                    throw new FileNotFoundException(Localization.Get("BundledFileMissing"), fileName);
 
-                WordPadStatusBar.Severity = InfoBarSeverity.Informational;
-                WordPadStatusBar.Message = "Preparing bundled x86 WordPad...";
-
-                var bundledFiles = new[]
-                {
-                    (Source: Path.Combine("resources", "wordpad.exe"), Destination: "wordpad.exe"),
-                    (Source: Path.Combine("resources", "WordpadFilter.dll"), Destination: "WordpadFilter.dll")
-                };
-
-                foreach (var (sourceRelativePath, destinationRelativePath) in bundledFiles)
-                {
-                    string? sourceFile = ResolveBundledAssetPath(sourceRelativePath);
-                    if (sourceFile == null)
-                        throw new FileNotFoundException("A required bundled x86 WordPad file is missing.", sourceRelativePath);
-
-                    string destinationFile = Path.Combine(backupPath, destinationRelativePath);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
-                    File.Copy(sourceFile, destinationFile, overwrite: true);
-                }
-
-                PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
-                return backupPath;
+                File.Copy(sourceFile, Path.Combine(backupPath, fileName), overwrite: true);
             }
-            catch (Exception ex)
-            {
-                AppLog.Error("Prepare bundled x86 WordPad", ex);
-                CleanTemporaryFiles();
-                await ShowDialogAsync("Bundled WordPad unavailable", ex.Message);
-                WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "Bundled backup unavailable";
-                return "";
-            }
+
+            PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
+            return backupPath;
         }
 
         private void SetupWordPadPaths(string backupPath)
         {
             if (string.IsNullOrEmpty(_sessionRootPath) || !IsOwnedSessionRoot(_sessionRootPath) ||
                 !PathGuard.IsWithin(_sessionRootPath, backupPath))
-                throw new InvalidOperationException("The WordPad files are outside the private session directory.");
+                throw new InvalidOperationException(Localization.Get("WordPadOutsideSession"));
 
             _originalWordPadPath = backupPath;
             _workingRootPath = Path.Combine(_sessionRootPath, "Working");
             if (!ResetToOriginal())
-                throw new IOException("Could not create an isolated working copy of WordPad.");
-        }
-
-        private async void WordPadSystemBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isActivityRunning || _isStarting || _isWindowClosed)
-            {
-                await ShowDialogAsync("Activity running", "Stop the current activity before changing the WordPad source.");
-                return;
-            }
-
-            SetLoading(true);
-            try
-            {
-                string backupPath = await CopyWordPadFolder();
-                if (backupPath.Length == 0)
-                    return;
-
-                SetupWordPadPaths(backupPath);
-                WordPadStatusBar.Severity = InfoBarSeverity.Success;
-                WordPadStatusBar.Message = "Ready";
-                ToggleStep2(true);
-
-                await AutoFetchActivities();
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Prepare system WordPad", ex);
-                CleanTemporaryFiles();
-                WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "WordPad setup failed";
-                await ShowDialogAsync("WordPad setup failed", ex.Message);
-            }
-            finally
-            {
-                SetLoading(false);
-            }
-        }
-
-        private async void WordPadBundledBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isActivityRunning || _isStarting || _isWindowClosed)
-            {
-                await ShowDialogAsync("Activity running", "Stop the current activity before changing the WordPad source.");
-                return;
-            }
-
-            SetLoading(true);
-            try
-            {
-                string backupPath = await PrepareBundledWordPadAsync();
-                if (backupPath.Length == 0)
-                    return;
-
-                SetupWordPadPaths(backupPath);
-                WordPadStatusBar.Severity = InfoBarSeverity.Success;
-                WordPadStatusBar.Message = "Ready";
-                ToggleStep2(true);
-                await AutoFetchActivities();
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Prepare bundled WordPad", ex);
-                CleanTemporaryFiles();
-                WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "WordPad setup failed";
-                await ShowDialogAsync("WordPad setup failed", ex.Message);
-            }
-            finally
-            {
-                SetLoading(false);
-            }
+                throw new IOException(Localization.Get("WorkingCopyFailed"));
         }
 
         #endregion
 
         #region Step 2: Select Activity
 
+        private ActivityOption? GetSelectedOption()
+        {
+            int index = ActivityListCombo.SelectedIndex;
+            return index >= 0 && index < _activityOptions.Count ? _activityOptions[index] : null;
+        }
+
+        private ActivityItem? GetSelectedActivityItem() => GetSelectedOption()?.Activity;
+
         private void ActivityListCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (!_isStarting && !_isActivityRunning && ActivityListCombo.SelectedIndex >= 0)
+            if (_isStarting || _isActivityRunning)
+                return;
+
+            ActivityOption? option = GetSelectedOption();
+            if (option != null)
+                ApplySelectedOption(option);
+        }
+
+        /// <summary>
+        /// Fills the folder and exe fields only when the selected activity actually changes, so rebuilding the
+        /// list (search, catalog reload) keeps what the user typed for the custom activity.
+        /// </summary>
+        private void ApplySelectedOption(ActivityOption option)
+        {
+            bool changed = !_hasAppliedOption ||
+                           option.IsCustom != _appliedIsCustom ||
+                           !ReferenceEquals(option.Activity, _appliedActivity);
+            if (changed)
             {
-                string selectedActivity = ActivityListCombo.SelectedItem?.ToString() ?? "";
-                
-                if (selectedActivity == "Custom Activity")
+                if (_hasAppliedOption && _appliedIsCustom)
                 {
-                    FolderNameTxt.Text = "Accessories";
-                    FileExeTxt.Text = "M1-Win64-Shipping";
-                    ToggleStep21(true, isCustomActivity: true);
+                    _customFolderText = FolderNameTxt.Text;
+                    _customExeText = FileExeTxt.Text;
                 }
-                else if (_downloadedActivities != null)
+
+                if (option.Activity == null)
                 {
-                    var activity = GetSelectedActivityItem();
-                    if (activity != null)
-                    {
-                        FolderNameTxt.Text = activity.folder;
-                        FileExeTxt.Text = Path.GetFileNameWithoutExtension(activity.exe);
-                    }
-                    ToggleStep21(true, isCustomActivity: false);
+                    FolderNameTxt.Text = _customFolderText;
+                    FileExeTxt.Text = _customExeText;
                 }
                 else
                 {
-                    ToggleStep21(true, isCustomActivity: false);
+                    FolderNameTxt.Text = option.Activity.folder;
+                    FileExeTxt.Text = ActivityRules.StripExeExtension(option.Activity.exe);
                 }
+
+                _hasAppliedOption = true;
+                _appliedIsCustom = option.IsCustom;
+                _appliedActivity = option.Activity;
             }
-        }
 
-        private ActivityItem? GetSelectedActivityItem()
-        {
-            string selectedActivity = ActivityListCombo.SelectedItem?.ToString() ?? "";
-            return _downloadedActivities?.FirstOrDefault(activity =>
-                string.Equals(GetActivityDisplayName(activity), selectedActivity, StringComparison.OrdinalIgnoreCase));
+            _isCustomActivity = option.IsCustom;
+            UpdateControlStates();
         }
-
-        private static string GetActivityDisplayName(ActivityItem activity) =>
-            activity.steamManifest == null ? activity.name : $"{activity.name} (SteamApps)";
 
         private void ActivityListButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1154,27 +1131,27 @@ namespace DiscordActivityMockV2
 
         private void RefreshActivityPopupItems()
         {
-            string selected = ActivityListCombo.SelectedItem?.ToString() ?? "";
             ActivityPopupList.Items.Clear();
+            foreach (ActivityOption option in _activityOptions)
+                ActivityPopupList.Items.Add(option.DisplayName);
 
-            foreach (object item in ActivityListCombo.Items)
-                ActivityPopupList.Items.Add(item?.ToString() ?? "");
-
-            ActivityPopupList.SelectedItem = selected;
-            if (ActivityListPopup.IsOpen && ActivityPopupList.SelectedItem != null)
-                ActivityPopupList.ScrollIntoView(ActivityPopupList.SelectedItem);
+            int selectedIndex = ActivityListCombo.SelectedIndex;
+            ActivityPopupList.SelectedIndex = selectedIndex;
+            if (ActivityListPopup.IsOpen && selectedIndex >= 0 && selectedIndex < ActivityPopupList.Items.Count)
+                ActivityPopupList.ScrollIntoView(ActivityPopupList.Items[selectedIndex]);
         }
 
         private void ActivityPopupList_ItemClick(object sender, ItemClickEventArgs e)
         {
-            CommitActivityPopupSelection(e.ClickedItem?.ToString());
+            string? clicked = e.ClickedItem?.ToString();
+            CommitActivityPopupSelection(_activityOptions.FindIndex(option => option.DisplayName == clicked));
         }
 
         private void ActivityPopupList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
         {
             if (e.Key == Windows.System.VirtualKey.Enter)
             {
-                CommitActivityPopupSelection(ActivityPopupList.SelectedItem?.ToString());
+                CommitActivityPopupSelection(ActivityPopupList.SelectedIndex);
                 e.Handled = true;
             }
             else if (e.Key == Windows.System.VirtualKey.Escape)
@@ -1185,12 +1162,12 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private void CommitActivityPopupSelection(string? selectedActivity)
+        private void CommitActivityPopupSelection(int index)
         {
-            if (string.IsNullOrEmpty(selectedActivity))
+            if (index < 0 || index >= _activityOptions.Count)
                 return;
 
-            ActivityListCombo.SelectedItem = selectedActivity;
+            ActivityListCombo.SelectedIndex = index;
             ActivityListPopup.IsOpen = false;
             ActivityListButton.Focus(FocusState.Programmatic);
         }
@@ -1199,149 +1176,141 @@ namespace DiscordActivityMockV2
         {
             var dialog = new ContentDialog
             {
-                Title = "Steam manifest required",
-                Content = $"This activity needs appmanifest_{manifest.appId}.acf. The mock executable and manifest will be created in a Steam library and kept there after the activity stops so Steam and Discord can detect them. Existing files will not be overwritten. If progress does not start, restart Steam and Discord. Continue?",
-                PrimaryButtonText = "Create and start",
-                CloseButtonText = "Cancel",
+                Title = Localization.Get("SteamManifestRequiredTitle"),
+                Content = new TextBlock
+                {
+                    Text = Localization.Get("SteamManifestRequiredMessage", manifest.appId),
+                    TextWrapping = TextWrapping.Wrap
+                },
+                PrimaryButtonText = Localization.Get("CreateAndStart"),
+                CloseButtonText = Localization.Get("Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot,
-                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                RequestedTheme = CurrentElementTheme
             };
 
             return await ShowContentDialogAsync(dialog) == ContentDialogResult.Primary;
         }
-        
+
         private async Task AutoFetchActivities()
         {
-            if (_downloadedActivities != null && _downloadedActivities.Length > 0)
+            if (_downloadedActivities is { Length: > 0 } || _isCatalogLoading || _isWindowClosed)
                 return;
 
-            try
-            {
-                LoadingRing.IsActive = true;
-                var (activities, usedFallback) = await LoadActivitiesAsync();
-                ApplyActivities(activities);
-                if (usedFallback)
-                    WordPadStatusBar.Message = "Offline activity list loaded";
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Auto-fetch activity catalog", ex);
-                if (!_isWindowClosed)
-                {
-                    WordPadStatusBar.Severity = InfoBarSeverity.Warning;
-                    WordPadStatusBar.Message = $"Activity list unavailable: {ex.Message}";
-                }
-            }
-            finally
-            {
-                LoadingRing.IsActive = false;
-            }
+            await LoadCatalogAsync(userRequested: false);
         }
 
         private async void FetchActivitiesBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_isActivityRunning || _isStarting || _isWindowClosed)
+            if (_isActivityRunning || _isStarting || _isCatalogLoading || _isWindowClosed)
                 return;
 
+            await LoadCatalogAsync(userRequested: true);
+        }
+
+        /// <summary>
+        /// Loads the online catalog, or the bundled one when offline. Automatic loads report in the status bar;
+        /// user-requested reloads show a dialog and clear the search.
+        /// </summary>
+        private async Task LoadCatalogAsync(bool userRequested)
+        {
+            _isCatalogLoading = true;
+            UpdateControlStates();
             try
             {
-                FetchActivitiesBtn.IsEnabled = false;
-                LoadingRing.IsActive = true;
                 var (activities, usedFallback) = await LoadActivitiesAsync();
+                if (_isWindowClosed)
+                    return;
+
                 ApplyActivities(activities);
-                ActivitySearchBox.Text = "";
-                if (usedFallback)
-                    await ShowDialogAsync("Offline mode", "The online list could not be loaded. The bundled activity list was used instead.");
+                if (userRequested)
+                {
+                    ActivitySearchBox.Text = "";
+                    if (usedFallback)
+                        await ShowDialogAsync(Localization.Get("OfflineModeTitle"), Localization.Get("OfflineModeMessage"));
+                }
+                else if (usedFallback)
+                {
+                    WordPadStatusBar.Message = Localization.Get("OfflineCatalogLoaded");
+                }
+            }
+            catch (OperationCanceledException) when (_windowLifetime.IsCancellationRequested)
+            {
+                // The window is closing.
             }
             catch (Exception ex)
             {
-                AppLog.Error("Fetch activity catalog", ex);
-                if (!_isWindowClosed)
-                    await ShowDialogAsync("Activity list error", ex.Message);
+                AppLog.Error("Load activity catalog", ex);
+                if (_isWindowClosed)
+                    return;
+
+                if (userRequested)
+                {
+                    await ShowDialogAsync(Localization.Get("CatalogErrorTitle"), ex.Message);
+                }
+                else
+                {
+                    WordPadStatusBar.Severity = InfoBarSeverity.Warning;
+                    WordPadStatusBar.Message = Localization.Get("CatalogUnavailable", ex.Message);
+                }
             }
             finally
             {
-                LoadingRing.IsActive = false;
-                if (!_isWindowClosed)
-                    UpdateActivityControls();
+                _isCatalogLoading = false;
+                UpdateControlStates();
             }
         }
 
         private async Task<(ActivityItem[] activities, bool usedFallback)> LoadActivitiesAsync()
         {
+            CancellationToken cancellationToken = _windowLifetime.Token;
             Exception? onlineError = null;
             try
             {
-                using var response = await activityHttpClient.GetAsync(githubActivityList, HttpCompletionOption.ResponseHeadersRead, _windowLifetime.Token);
+                using var response = await activityHttpClient.GetAsync(githubActivityList, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.EnsureSuccessStatusCode();
-                if (response.Content.Headers.ContentLength is long length && length > 2 * 1024 * 1024)
-                    throw new InvalidDataException("The activity catalog is larger than expected.");
+                if (response.Content.Headers.ContentLength > MaxCatalogBytes)
+                    throw new InvalidDataException(Localization.Get("CatalogTooLarge"));
 
-                string content = await response.Content.ReadAsStringAsync(_windowLifetime.Token);
-                if (content.Length > 2 * 1024 * 1024)
-                    throw new InvalidDataException("The activity catalog is larger than expected.");
-                return (ActivityRules.ParseActivities(content), false);
+                await using Stream content = await response.Content.ReadAsStreamAsync(cancellationToken);
+                string json = await BoundedRead.ReadUtf8Async(content, MaxCatalogBytes, cancellationToken);
+                return (ActivityRules.ParseActivities(json), false);
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidDataException)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                                       ex is HttpRequestException or OperationCanceledException or JsonException or InvalidDataException or IOException)
             {
+                // HttpClient timeouts surface as OperationCanceledException; use the bundled list instead.
+                AppLog.Warning("Download activity catalog", $"{ex.GetType().Name}: {ex.Message}");
                 onlineError = ex;
             }
 
             using Stream? bundledStream = typeof(MainWindow).Assembly.GetManifestResourceStream("DiscordActivityMockV2.ActivityList.json");
             if (bundledStream == null)
-                throw new IOException("Could not download the catalog and no bundled catalog is available.", onlineError);
+                throw new IOException(Localization.Get("CatalogMissing"), onlineError);
 
             using var reader = new StreamReader(bundledStream);
-            return (ActivityRules.ParseActivities(await reader.ReadToEndAsync(_windowLifetime.Token)), true);
+            return (ActivityRules.ParseActivities(await reader.ReadToEndAsync(cancellationToken)), true);
         }
 
         private void ApplyActivities(ActivityItem[] activities)
         {
             _downloadedActivities = activities;
             PopulateActivityList(ActivitySearchBox.Text);
-            ActivitySearchBox.IsEnabled = !_isActivityRunning;
         }
 
         private void PopulateActivityList(string? searchFilter = null, bool resetSelectionWhenSearchCleared = false)
         {
-            if (_downloadedActivities == null) return;
+            ActivityOption? previous = GetSelectedOption();
+            List<ActivityOption> options = ActivityRules.BuildOptions(
+                _downloadedActivities, searchFilter, Localization.Get("CustomActivity"));
+            int selectedIndex = ActivityRules.ChooseSelectionIndex(options, searchFilter, previous, resetSelectionWhenSearchCleared);
 
-            string previousSelection = ActivityListCombo.SelectedItem?.ToString() ?? "";
-            string normalizedSearch = searchFilter?.Trim() ?? "";
-
+            _activityOptions = options;
             ActivityListCombo.Items.Clear();
+            foreach (ActivityOption option in options)
+                ActivityListCombo.Items.Add(option.DisplayName);
 
-            ActivityItem[] filteredActivities = string.IsNullOrWhiteSpace(normalizedSearch)
-                ? _downloadedActivities
-                : _downloadedActivities.Where(activity =>
-                    activity.name.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)).ToArray();
-
-            foreach (var activity in filteredActivities)
-            {
-                ActivityListCombo.Items.Add(GetActivityDisplayName(activity));
-            }
-
-            // Always add Custom Activity at the end
-            ActivityListCombo.Items.Add("Custom Activity");
-
-            string selection = "Custom Activity";
-            if (!string.IsNullOrWhiteSpace(normalizedSearch) && filteredActivities.Length > 0)
-            {
-                ActivityItem closestMatch = filteredActivities.FirstOrDefault(activity =>
-                    string.Equals(activity.name, normalizedSearch, StringComparison.OrdinalIgnoreCase))
-                    ?? filteredActivities.FirstOrDefault(activity =>
-                        activity.name.StartsWith(normalizedSearch, StringComparison.OrdinalIgnoreCase))
-                    ?? filteredActivities[0];
-                selection = GetActivityDisplayName(closestMatch);
-            }
-            else if (string.IsNullOrWhiteSpace(normalizedSearch) && !resetSelectionWhenSearchCleared &&
-                     ActivityListCombo.Items.Contains(previousSelection))
-            {
-                selection = previousSelection;
-            }
-
-            ActivityListCombo.SelectedItem = selection;
+            ActivityListCombo.SelectedIndex = selectedIndex;
             RefreshActivityPopupItems();
         }
 
@@ -1362,7 +1331,7 @@ namespace DiscordActivityMockV2
                 return;
 
             _isStarting = true;
-            UpdateActivityControls();
+            UpdateControlStates();
             try
             {
                 if (!_dontShowStartWarning && !await ShowStartWarningDialog())
@@ -1376,7 +1345,7 @@ namespace DiscordActivityMockV2
                 if (string.IsNullOrEmpty(_workingRootPath) || string.IsNullOrEmpty(_currentExePath) ||
                     string.IsNullOrEmpty(_currentFolderPath) || !File.Exists(_currentExePath) || !Directory.Exists(_currentFolderPath))
                 {
-                    await ShowDialogAsync("WordPad required", "Prepare a valid WordPad copy before starting an activity.");
+                    await ShowDialogAsync(Localization.Get("SelectWordPadFirst"), Localization.Get("WordPadRequiredMessage"));
                     return;
                 }
 
@@ -1392,12 +1361,12 @@ namespace DiscordActivityMockV2
                         SteamManifestSupport.Validate(steamManifest, targetFolderName);
                         string catalogExeName = ActivityRules.NormalizeExecutableName(selectedActivity!.exe);
                         if (!string.Equals(targetExeName, catalogExeName, StringComparison.OrdinalIgnoreCase))
-                            throw new ArgumentException("The executable name for a Steam manifest activity must match its catalog entry.");
+                            throw new ArgumentException(Localization.Get("SteamExeMismatch"));
                     }
                 }
                 catch (ArgumentException ex)
                 {
-                    await ShowDialogAsync("Invalid activity", ex.Message);
+                    await ShowDialogAsync(Localization.Get("InvalidActivityTitle"), ex.Message);
                     return;
                 }
 
@@ -1407,12 +1376,12 @@ namespace DiscordActivityMockV2
                                    !string.Equals(_lastExeName, targetExeName, StringComparison.OrdinalIgnoreCase));
                 if (needsReset && !ResetToOriginal())
                 {
-                    await ShowDialogAsync("Setup error", "Could not restore the isolated WordPad copy. Reload the WordPad source and try again.");
+                    await ShowDialogAsync(Localization.Get("SetupErrorTitle"), Localization.Get("RestoreWorkingCopyFailed"));
                     return;
                 }
 
                 if (!PathGuard.IsWithin(_workingRootPath, _currentFolderPath))
-                    throw new InvalidOperationException("The current working folder is outside the private session directory.");
+                    throw new InvalidOperationException(Localization.Get("WorkingFolderOutsideSession"));
 
                 string activityExePath;
                 string activityWorkingDirectory;
@@ -1426,7 +1395,7 @@ namespace DiscordActivityMockV2
                     activityExePath = steamLaunch.ExecutablePath;
                     activityWorkingDirectory = steamLaunch.WorkingDirectory;
                     WordPadStatusBar.Severity = InfoBarSeverity.Success;
-                    WordPadStatusBar.Message = "Steam manifest ready";
+                    WordPadStatusBar.Message = Localization.Get("SteamManifestReady");
                 }
                 else
                 {
@@ -1436,7 +1405,7 @@ namespace DiscordActivityMockV2
                     {
                         string newExePath = Path.Combine(currentExeDirectory, targetExeName + ".exe");
                         if (File.Exists(newExePath))
-                            throw new IOException("The target executable already exists in this isolated working folder.");
+                            throw new IOException(Localization.Get("TargetExeExists"));
                         RenameWordPadMuiFiles(_currentFolderPath, Path.GetFileName(_currentExePath), targetExeName);
                         File.Move(_currentExePath, newExePath);
                         _currentExePath = newExePath;
@@ -1446,10 +1415,10 @@ namespace DiscordActivityMockV2
                     if (!string.Equals(currentFolderPath, newFolderPath, StringComparison.OrdinalIgnoreCase))
                     {
                         if (Directory.Exists(newFolderPath) || File.Exists(newFolderPath))
-                            throw new IOException("The requested activity folder already exists in the private session directory.");
+                            throw new IOException(Localization.Get("TargetFolderExists"));
 
                         if (PathGuard.IsWithin(currentFolderPath, newFolderPath))
-                            throw new ArgumentException("The activity folder cannot be inside the temporary WordPad folder.");
+                            throw new ArgumentException(Localization.Get("FolderInsideWorkingFolder"));
 
                         Directory.CreateDirectory(Path.GetDirectoryName(newFolderPath)!);
                         Directory.Move(_currentFolderPath, newFolderPath);
@@ -1479,7 +1448,7 @@ namespace DiscordActivityMockV2
                 if (!process.Start())
                 {
                     process.Dispose();
-                    throw new InvalidOperationException("Windows did not start the activity process.");
+                    throw new InvalidOperationException(Localization.Get("ProcessStartFailed"));
                 }
 
                 _runningProcess = process;
@@ -1492,15 +1461,16 @@ namespace DiscordActivityMockV2
                 if (_hideEnabled)
                     _ = HideProcessAfterDelayAsync(process, sessionId, _hideDelaySeconds, _hideCancellation.Token);
 
-                _activityStartTime = DateTime.Now;
-                _activityTimer?.Start();
-                if (_autoStopEnabled && _autoStopTimer != null)
+                _activityStopwatch.Restart();
+                TimerText.Text = ActivityRules.FormatElapsed(TimeSpan.Zero);
+                _activityTimer.Start();
+                if (_autoStopEnabled)
                 {
                     _autoStopTimer.Interval = TimeSpan.FromMinutes(_autoStopMinutes);
                     _autoStopTimer.Start();
                 }
 
-                UpdateActivityControls();
+                UpdateControlStates();
                 if (process.HasExited)
                     DispatcherQueue.TryEnqueue(() => HandleProcessExited(process, sessionId));
             }
@@ -1510,22 +1480,20 @@ namespace DiscordActivityMockV2
                 bool stopped = !_isActivityRunning || StopRunningProcess();
                 if (stopped)
                 {
-                    _activityTimer?.Stop();
-                    _autoStopTimer?.Stop();
-                    TimerText.Text = "00:00:00";
+                    ResetActivityTimers();
                     ResetToOriginal();
                 }
                 else
                 {
                     WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                    WordPadStatusBar.Message = "Windows could not stop the partially started process.";
+                    WordPadStatusBar.Message = Localization.Get("PartialStopFailed");
                 }
-                await ShowDialogAsync("Could not start activity", ex.Message);
+                await ShowDialogAsync(Localization.Get("StartFailedTitle"), ex.Message);
             }
             finally
             {
                 _isStarting = false;
-                UpdateActivityControls();
+                UpdateControlStates();
             }
         }
 
@@ -1539,10 +1507,12 @@ namespace DiscordActivityMockV2
             _hideCancellation?.Cancel();
             _hideCancellation?.Dispose();
             _hideCancellation = null;
-            _activityTimer?.Stop();
-            _autoStopTimer?.Stop();
+            // Keep the final elapsed time visible until the next start.
+            _activityTimer.Stop();
+            _autoStopTimer.Stop();
+            _activityStopwatch.Stop();
             process.Dispose();
-            UpdateActivityControls();
+            UpdateControlStates();
         }
 
         private async Task HideProcessAfterDelayAsync(Process process, long sessionId, int delaySeconds, CancellationToken cancellationToken)
@@ -1583,18 +1553,16 @@ namespace DiscordActivityMockV2
         {
             if (StopRunningProcess())
             {
-                _activityTimer?.Stop();
-                _autoStopTimer?.Stop();
-                TimerText.Text = "00:00:00";
+                ResetActivityTimers();
             }
             else
             {
                 WordPadStatusBar.Severity = InfoBarSeverity.Error;
-                WordPadStatusBar.Message = "Windows could not stop the activity process. Try again.";
+                WordPadStatusBar.Message = Localization.Get("StopProcessFailed");
             }
-            UpdateActivityControls();
+            UpdateControlStates();
         }
-        
+
         private void HideFlyout_Opening(object sender, object e)
         {
             // Sync UI controls with saved values when flyout opens
@@ -1603,7 +1571,7 @@ namespace DiscordActivityMockV2
             if (HideDelaySeconds != null)
                 HideDelaySeconds.Value = _hideDelaySeconds;
         }
-        
+
         private void TimerFlyout_Opening(object sender, object e)
         {
             // Sync UI controls with saved values when flyout opens
@@ -1615,7 +1583,7 @@ namespace DiscordActivityMockV2
                 AutoStopMinutes.IsEnabled = _autoStopEnabled;
             }
         }
-        
+
         private void AutoStopCheck_Changed(object sender, RoutedEventArgs e)
         {
             _autoStopEnabled = AutoStopCheck?.IsChecked == true;
@@ -1626,7 +1594,7 @@ namespace DiscordActivityMockV2
             UpdateTimerStatusText();
             SaveSettings();
         }
-        
+
         private void AutoStopMinutes_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
         {
             if (double.IsFinite(args.NewValue))
@@ -1636,28 +1604,23 @@ namespace DiscordActivityMockV2
             UpdateTimerStatusText();
             SaveSettings();
         }
-        
+
         private void UpdateTimerStatusText()
         {
             if (TimerStatusText == null) return;
-            
-            if (_autoStopEnabled)
-            {
-                TimerStatusText.Text = $"Timer: {_autoStopMinutes}m";
-            }
-            else
-            {
-                TimerStatusText.Text = "Timer: Off";
-            }
+
+            TimerStatusText.Text = _autoStopEnabled
+                ? Localization.Get("TimerStatusOn", _autoStopMinutes)
+                : Localization.Get("TimerStatusOff");
         }
-        
+
         private void HideWordPadCheck_Changed(object sender, RoutedEventArgs e)
         {
             _hideEnabled = HideWordPadCheck?.IsChecked == true;
             UpdateHideStatusText();
             SaveSettings();
         }
-        
+
         private void HideDelaySeconds_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
         {
             if (double.IsFinite(args.NewValue))
@@ -1667,19 +1630,14 @@ namespace DiscordActivityMockV2
             UpdateHideStatusText();
             SaveSettings();
         }
-        
+
         private void UpdateHideStatusText()
         {
             if (HideStatusText == null) return;
-            
-            if (_hideEnabled)
-            {
-                HideStatusText.Text = $"Hide: {_hideDelaySeconds}s";
-            }
-            else
-            {
-                HideStatusText.Text = "Hide: Off";
-            }
+
+            HideStatusText.Text = _hideEnabled
+                ? Localization.Get("HideStatusOn", _hideDelaySeconds)
+                : Localization.Get("HideStatusOff");
         }
 
         private void ClearBtn_Click(object sender, RoutedEventArgs e)
@@ -1696,6 +1654,7 @@ namespace DiscordActivityMockV2
         {
             OpenUrl("https://github.com/iiroak");
         }
+
         private async void InfoBtn_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new ContentDialog
@@ -1706,13 +1665,13 @@ namespace DiscordActivityMockV2
                 CloseButtonText = Localization.Get("OK"),
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot,
-                RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                RequestedTheme = CurrentElementTheme
             };
             if (await ShowContentDialogAsync(dialog) == ContentDialogResult.Primary)
                 await CheckForUpdatesAsync(showResultWhenCurrent: true);
         }
 
-        private void OpenUrl(string url)
+        private static void OpenUrl(string url)
         {
             try
             {
@@ -1720,7 +1679,7 @@ namespace DiscordActivityMockV2
                 {
                     FileName = url,
                     UseShellExecute = true
-                });
+                })?.Dispose();
             }
             catch (Exception ex)
             {

@@ -1,11 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 
 namespace DiscordActivityMockV2
 {
+    /// <summary>One entry of the activity list: a catalog activity, or the custom activity when <see cref="Activity"/> is null.</summary>
+    internal sealed record ActivityOption(ActivityItem? Activity, string DisplayName)
+    {
+        public bool IsCustom => Activity == null;
+    }
+
     /// <summary>Validation of activity folder and executable names, and parsing of the activity catalog.</summary>
     internal static class ActivityRules
     {
@@ -23,7 +30,7 @@ namespace DiscordActivityMockV2
         public static string ResolveChildPath(string root, string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
-                throw new ArgumentException("The folder must be a relative path.");
+                throw new ArgumentException(Localization.Get("FolderMustBeRelative"));
 
             string normalized = relativePath.Replace('/', Path.DirectorySeparatorChar)
                                             .Replace('\\', Path.DirectorySeparatorChar);
@@ -32,12 +39,12 @@ namespace DiscordActivityMockV2
                                         segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
                                         segment.EndsWith(' ') || segment.EndsWith('.') ||
                                         IsReservedDeviceName(segment)))
-                throw new ArgumentException("The folder name contains an invalid path segment.");
+                throw new ArgumentException(Localization.Get("FolderInvalidSegment"));
 
             string fullRoot = Path.GetFullPath(root);
             string fullPath = Path.GetFullPath(Path.Combine(fullRoot, normalized));
             if (!PathGuard.IsWithin(fullRoot, fullPath))
-                throw new ArgumentException("The folder must remain inside the private working directory.");
+                throw new ArgumentException(Localization.Get("FolderOutsideWorkingDirectory"));
             return fullPath;
         }
 
@@ -49,10 +56,10 @@ namespace DiscordActivityMockV2
             if (string.IsNullOrWhiteSpace(name) || name is "." or ".." ||
                 Path.IsPathRooted(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
                 name.EndsWith(' ') || name.EndsWith('.') || name.Contains('/') || name.Contains('\\'))
-                throw new ArgumentException("The executable name is invalid.");
+                throw new ArgumentException(Localization.Get("ExeNameInvalid"));
 
             if (IsReservedDeviceName(name))
-                throw new ArgumentException("The executable name is reserved by Windows.");
+                throw new ArgumentException(Localization.Get("ExeNameReserved"));
 
             return name;
         }
@@ -78,7 +85,7 @@ namespace DiscordActivityMockV2
         public static ActivityItem[] ParseActivities(string json)
         {
             ActivityItem?[] activities = JsonSerializer.Deserialize(json, AppJsonContext.Default.ActivityItemArray)
-                                         ?? throw new JsonException("The activity catalog is empty.");
+                                         ?? throw new JsonException(Localization.Get("CatalogEmpty"));
 
             var validActivities = new List<ActivityItem>();
             foreach (ActivityItem? activity in activities)
@@ -111,8 +118,94 @@ namespace DiscordActivityMockV2
                 .ToArray();
 
             if (uniqueActivities.Length == 0)
-                throw new JsonException("The activity catalog did not contain any valid entries.");
+                throw new JsonException(Localization.Get("CatalogNoValidEntries"));
             return uniqueActivities;
+        }
+
+        public static string GetDisplayName(ActivityItem activity) =>
+            activity.steamManifest == null ? activity.name : $"{activity.name} (SteamApps)";
+
+        /// <summary>
+        /// Catalog activities whose name contains <paramref name="searchFilter"/>, followed by the custom activity.
+        /// Display names are unique, so the list can be matched by name or by index.
+        /// </summary>
+        public static List<ActivityOption> BuildOptions(IReadOnlyList<ActivityItem>? activities, string? searchFilter, string customLabel)
+        {
+            string search = searchFilter?.Trim() ?? "";
+            var options = new List<ActivityOption>();
+            var displayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { customLabel };
+            foreach (ActivityItem activity in activities ?? Array.Empty<ActivityItem>())
+            {
+                if (search.Length > 0 && !activity.name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string displayName = GetDisplayName(activity);
+                if (displayNames.Add(displayName))
+                    options.Add(new ActivityOption(activity, displayName));
+            }
+
+            options.Add(new ActivityOption(null, customLabel));
+            return options;
+        }
+
+        /// <summary>
+        /// With a search: the exact name match, else the first name that starts with it, else the first result.
+        /// Without a search: the previous selection when it is still listed, unless the search was just cleared.
+        /// Otherwise the custom activity, which is always last.
+        /// </summary>
+        public static int ChooseSelectionIndex(
+            IReadOnlyList<ActivityOption> options,
+            string? searchFilter,
+            ActivityOption? previous,
+            bool resetWhenSearchCleared)
+        {
+            int customIndex = options.Count - 1;
+            string search = searchFilter?.Trim() ?? "";
+            if (search.Length > 0)
+            {
+                if (customIndex == 0)
+                    return customIndex;
+
+                int exact = IndexOf(options, customIndex, option =>
+                    string.Equals(option.Activity!.name, search, StringComparison.OrdinalIgnoreCase));
+                if (exact >= 0)
+                    return exact;
+
+                int prefix = IndexOf(options, customIndex, option =>
+                    option.Activity!.name.StartsWith(search, StringComparison.OrdinalIgnoreCase));
+                return prefix >= 0 ? prefix : 0;
+            }
+
+            if (!resetWhenSearchCleared && previous != null)
+            {
+                for (int i = 0; i < options.Count; i++)
+                {
+                    if (options[i].IsCustom == previous.IsCustom &&
+                        string.Equals(options[i].DisplayName, previous.DisplayName, StringComparison.OrdinalIgnoreCase))
+                        return i;
+                }
+            }
+
+            return customIndex;
+        }
+
+        /// <summary>Elapsed time as hours:minutes:seconds; hours keep counting past 24.</summary>
+        public static string FormatElapsed(TimeSpan elapsed)
+        {
+            if (elapsed < TimeSpan.Zero)
+                elapsed = TimeSpan.Zero;
+            return string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}",
+                (long)elapsed.TotalHours, elapsed.Minutes, elapsed.Seconds);
+        }
+
+        private static int IndexOf(IReadOnlyList<ActivityOption> options, int count, Func<ActivityOption, bool> predicate)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (predicate(options[i]))
+                    return i;
+            }
+            return -1;
         }
     }
 }

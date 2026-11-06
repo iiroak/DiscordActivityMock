@@ -2,6 +2,19 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="DiscordActivityMockV2.app"/>
 
+  <!--
+    asInvoker disables UAC file virtualization for this 32-bit app. Without it, writes to protected folders
+    (for example a Steam library under Program Files) can be silently redirected to VirtualStore, where
+    Steam never sees them. With it, Windows reports access denied and the app shows a clear error.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!-- The ID below informs the system that this application is compatible with OS features first introduced in Windows 10. 

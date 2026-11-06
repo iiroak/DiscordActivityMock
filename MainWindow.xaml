@@ -8,7 +8,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Discord Activity Mock V2"
+    Title="Discord Activity Mock"
     Closed="Window_Closed">
 
     <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="0"
@@ -33,7 +33,7 @@
                     <Border CornerRadius="5" Width="24" Height="24" Background="#5865F2">
                         <Image x:Name="AppLogoImage" Width="24" Height="24" Stretch="Uniform" />
                     </Border>
-                    <TextBlock Text="Discord Activity Mock" FontSize="12" FontWeight="SemiBold" 
+                    <TextBlock x:Name="AppTitleText" Text="Discord Activity Mock" FontSize="12" FontWeight="SemiBold"
                                Foreground="White" VerticalAlignment="Center"/>
                     <TextBlock x:Name="VersionText" FontSize="11"
                                Foreground="#99AAB5" VerticalAlignment="Center"/>
@@ -51,7 +51,7 @@
             <StackPanel x:Name="WindowControlsPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Stretch">
                 <Button x:Name="MinimizeBtn" Click="MinimizeBtn_Click" VerticalAlignment="Stretch"
                         Background="Transparent" BorderThickness="0" Width="46" CornerRadius="0">
-                    <FontIcon Glyph="&#xE921;" FontSize="10" Foreground="#99AAB5"/>
+                    <FontIcon x:Name="MinimizeIcon" Glyph="&#xE921;" FontSize="10" Foreground="#99AAB5"/>
                 </Button>
                 <Button x:Name="MaximizeBtn" Click="MaximizeBtn_Click" VerticalAlignment="Stretch"
                         Background="Transparent" BorderThickness="0" Width="46" CornerRadius="0">
@@ -64,7 +64,7 @@
                         <SolidColorBrush x:Key="ButtonBackgroundPointerOver">#c42b1c</SolidColorBrush>
                         <SolidColorBrush x:Key="ButtonBackgroundPressed">#b22a1c</SolidColorBrush>
                     </Button.Resources>
-                    <FontIcon Glyph="&#xE8BB;" FontSize="10" Foreground="#99AAB5"/>
+                    <FontIcon x:Name="CloseIcon" Glyph="&#xE8BB;" FontSize="10" Foreground="#99AAB5"/>
                 </Button>
             </StackPanel>
         </Grid>
@@ -139,7 +139,7 @@
                             <TextBox x:Name="ActivitySearchBox" PlaceholderText="Search..." IsEnabled="False"
                                      Padding="8,6" FontSize="12" TextChanged="ActivitySearchBox_TextChanged"/>
                             <Button x:Name="FetchActivitiesBtn" Grid.Column="1" IsEnabled="False" Margin="6,0,0,0" 
-                                    Padding="10,6" Click="FetchActivitiesBtn_Click" ToolTipService.ToolTip="Fetch activity list">
+                                    Padding="10,6" Click="FetchActivitiesBtn_Click">
                                 <FontIcon x:Name="FetchIcon" Glyph="&#xE895;" FontSize="14"/>
                             </Button>
                         </Grid>
@@ -173,7 +173,7 @@
                             <TextBox x:Name="FileExeTxt" Grid.Column="2" Header="Exe Name" Text="M1-Win64-Shipping" 
                                      IsEnabled="False" FontSize="12" Padding="8,6"/>
                             <Button x:Name="ClearBtn" Grid.Column="3" IsEnabled="False" VerticalAlignment="Bottom"
-                                    Margin="6,0,0,0" Padding="8" ToolTipService.ToolTip="Clear" Click="ClearBtn_Click">
+                                    Margin="6,0,0,0" Padding="8" Click="ClearBtn_Click">
                                 <FontIcon Glyph="&#xE894;" FontSize="12"/>
                             </Button>
                         </Grid>
@@ -207,7 +207,7 @@
                     
                     <!-- Hide WordPad Button with Flyout -->
                     <Button x:Name="HideSettingsBtn" Grid.Column="1" Margin="16,0,0,0" Padding="10,6" 
-                            IsEnabled="False" VerticalAlignment="Center" ToolTipService.ToolTip="Hide Settings">
+                            IsEnabled="False" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE7B3;" FontSize="14"/>
                             <TextBlock x:Name="HideStatusText" Text="Hide: 15s" FontSize="12"/>
@@ -215,7 +215,7 @@
                         <Button.Flyout>
                             <Flyout x:Name="HideFlyout" Placement="Bottom" Opening="HideFlyout_Opening">
                                 <StackPanel Spacing="12" Width="250">
-                                    <TextBlock Text="Hide WordPad" FontWeight="SemiBold" FontSize="14"/>
+                                    <TextBlock x:Name="HideFlyoutTitle" Text="Hide WordPad" FontWeight="SemiBold" FontSize="14"/>
                                     <CheckBox x:Name="HideWordPadCheck" Content="Enable hide" IsChecked="True"
                                               Checked="HideWordPadCheck_Changed" Unchecked="HideWordPadCheck_Changed"/>
                                     <Grid>
@@ -224,13 +224,14 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Delay" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                        <TextBlock x:Name="HideDelayLabel" Grid.Column="0" Text="Delay" VerticalAlignment="Center" Margin="0,0,12,0"/>
                                         <NumberBox x:Name="HideDelaySeconds" Grid.Column="1" Value="15" Minimum="1" Maximum="60" 
                                                    SpinButtonPlacementMode="Inline" MinWidth="100" HorizontalAlignment="Stretch"
                                                    SmallChange="1" LargeChange="5" ValueChanged="HideDelaySeconds_ValueChanged"/>
-                                        <TextBlock Grid.Column="2" Text="sec" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                        <TextBlock x:Name="HideDelayUnit" Grid.Column="2" Text="sec" VerticalAlignment="Center" Margin="8,0,0,0"/>
                                     </Grid>
-                                    <TextBlock Text="Discord may take time to detect the activity. If it's not recognized, increase this value." 
+                                    <TextBlock x:Name="HideDelayHelpText"
+                                               Text="Discord may take time to detect the activity. If it's not recognized, increase this value."
                                                FontSize="11" TextWrapping="Wrap"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 </StackPanel>
@@ -240,7 +241,7 @@
                     
                     <!-- Auto-Stop Timer Button with Flyout -->
                     <Button x:Name="TimerSettingsBtn" Grid.Column="2" Margin="8,0,0,0" Padding="10,6" 
-                            IsEnabled="False" VerticalAlignment="Center" ToolTipService.ToolTip="Timer Settings">
+                            IsEnabled="False" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE916;" FontSize="14"/>
                             <TextBlock x:Name="TimerStatusText" Text="Timer: Off" FontSize="12"/>
@@ -248,7 +249,7 @@
                         <Button.Flyout>
                             <Flyout x:Name="TimerFlyout" Placement="Bottom" Opening="TimerFlyout_Opening">
                                 <StackPanel Spacing="12" Width="250">
-                                    <TextBlock Text="Auto-Stop Timer" FontWeight="SemiBold" FontSize="14"/>
+                                    <TextBlock x:Name="TimerFlyoutTitle" Text="Auto-stop timer" FontWeight="SemiBold" FontSize="14"/>
                                     <CheckBox x:Name="AutoStopCheck" Content="Enable auto-stop" 
                                               Checked="AutoStopCheck_Changed" Unchecked="AutoStopCheck_Changed"/>
                                     <Grid>
@@ -257,13 +258,13 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Stop after" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                        <TextBlock x:Name="AutoStopLabel" Grid.Column="0" Text="Stop after" VerticalAlignment="Center" Margin="0,0,12,0"/>
                                         <NumberBox x:Name="AutoStopMinutes" Grid.Column="1" Value="30" Minimum="1" Maximum="1440" 
                                                    SpinButtonPlacementMode="Inline" MinWidth="100" HorizontalAlignment="Stretch" IsEnabled="False"
                                                    SmallChange="1" LargeChange="10" ValueChanged="AutoStopMinutes_ValueChanged"/>
-                                        <TextBlock Grid.Column="2" Text="min" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                        <TextBlock x:Name="AutoStopUnit" Grid.Column="2" Text="min" VerticalAlignment="Center" Margin="8,0,0,0"/>
                                     </Grid>
-                                    <TextBlock Text="Max: 1440 min (24 hours)" FontSize="11" 
+                                    <TextBlock x:Name="AutoStopMaxText" Text="Max: 1440 min (24 hours)" FontSize="11"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 </StackPanel>
                             </Flyout>

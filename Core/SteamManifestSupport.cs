@@ -28,15 +28,15 @@ namespace DiscordActivityMockV2
             manifest.installDir = manifest.installDir.Trim();
 
             if (!uint.TryParse(manifest.appId, out _))
-                throw new ArgumentException("The Steam manifest AppID must be a positive number.");
+                throw new ArgumentException(Localization.Get("SteamAppIdInvalid"));
             if (string.IsNullOrWhiteSpace(manifest.name) || manifest.name.Any(char.IsControl))
-                throw new ArgumentException("The Steam manifest name is invalid.");
+                throw new ArgumentException(Localization.Get("SteamNameInvalid"));
             if (!uint.TryParse(manifest.stateFlags, out _))
-                throw new ArgumentException("The Steam manifest StateFlags value must be a number.");
+                throw new ArgumentException(Localization.Get("SteamStateFlagsInvalid"));
 
             ValidateInstallDirectory(manifest.installDir);
             if (!string.Equals(activityFolder, manifest.installDir, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("For a Steam manifest entry, folder must match steamManifest.installDir.");
+                throw new ArgumentException(Localization.Get("SteamFolderMismatch"));
         }
 
         public static SteamManifestLaunch Prepare(
@@ -48,11 +48,11 @@ namespace DiscordActivityMockV2
         {
             Validate(manifest, manifest.installDir);
             if (!Directory.Exists(sourceFolder) || !File.Exists(sourceExecutable))
-                throw new FileNotFoundException("The temporary activity executable is not available to copy.", sourceExecutable);
+                throw new FileNotFoundException(Localization.Get("SteamSourceMissing"), sourceExecutable);
 
             List<string> libraries = (steamLibrariesOverride ?? FindSteamLibraries()).ToList();
             if (libraries.Count == 0)
-                throw new DirectoryNotFoundException("Could not find a Steam library. Start Steam once and verify its installation path.");
+                throw new DirectoryNotFoundException(Localization.Get("SteamLibraryNotFound"));
 
             string expectedManifest = BuildManifest(manifest);
             string manifestFileName = $"appmanifest_{manifest.appId}.acf";
@@ -60,7 +60,7 @@ namespace DiscordActivityMockV2
                 .Where(library => File.Exists(Path.Combine(library, "steamapps", manifestFileName)))
                 .ToArray();
             if (librariesWithManifest.Length > 1)
-                throw new IOException($"More than one Steam library already contains {manifestFileName}; no files were changed.");
+                throw new IOException(Localization.Get("SteamManifestInSeveralLibraries", manifestFileName));
             if (librariesWithManifest.Length == 1)
                 libraries = librariesWithManifest.ToList();
 
@@ -75,9 +75,9 @@ namespace DiscordActivityMockV2
 
                 bool manifestExists = File.Exists(manifestPath);
                 if (manifestExists && !ManifestMatches(manifestPath, manifest))
-                    throw new IOException($"Steam already has a different {manifestFileName}; it was left untouched.");
+                    throw new IOException(Localization.Get("SteamManifestDifferent", manifestFileName));
                 if (Directory.Exists(manifestPath))
-                    throw new IOException($"A directory already exists where Steam expects {manifestFileName}; it was left untouched.");
+                    throw new IOException(Localization.Get("SteamManifestIsDirectory", manifestFileName));
 
                 bool gameDirectoryExists = Directory.Exists(gameDirectory);
                 bool reusableLegacyMock = gameDirectoryExists && manifestExists &&
@@ -89,7 +89,7 @@ namespace DiscordActivityMockV2
                 if (gameDirectoryExists && !reusableDirectory)
                 {
                     if (manifestExists)
-                        throw new IOException($"The existing '{manifest.installDir}' folder does not match the activity mock. Existing files were left untouched.");
+                        throw new IOException(Localization.Get("SteamExistingFolderMismatch", manifest.installDir));
 
                     continue;
                 }
@@ -148,7 +148,7 @@ namespace DiscordActivityMockV2
                                 if (reusableLegacyMock)
                                     continue;
 
-                                throw new IOException($"The existing Steam file '{destinationRelativePath}' does not match the temporary mock executable and was left untouched.");
+                                throw new IOException(Localization.Get("SteamFileMismatch", destinationRelativePath));
                             }
                             continue;
                         }
@@ -202,9 +202,9 @@ namespace DiscordActivityMockV2
             }
 
             if (accessError != null)
-                throw new UnauthorizedAccessException("Windows denied writing the mock executable or Steam manifest to every available library. Choose a writable Steam library or grant the app permission.", accessError);
+                throw new UnauthorizedAccessException(Localization.Get("SteamAccessDenied"), accessError);
 
-            throw new IOException($"No Steam library is available for '{manifest.installDir}'. A folder with that name already exists in each candidate library, so nothing was overwritten.");
+            throw new IOException(Localization.Get("SteamNoFreeLibrary", manifest.installDir));
         }
 
         internal static string BuildManifest(SteamManifestItem manifest)
@@ -232,7 +232,7 @@ namespace DiscordActivityMockV2
                 installDir.EndsWith(' ') || installDir.EndsWith('.') ||
                 installDir.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
                 ActivityRules.IsReservedDeviceName(installDir))
-                throw new ArgumentException("The Steam manifest installDir must be one valid folder name.");
+                throw new ArgumentException(Localization.Get("SteamInstallDirInvalid"));
         }
 
         private static bool ManifestMatches(string path, SteamManifestItem manifest)
