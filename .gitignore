@@ -1,6 +1,9 @@
 .vs/
 bin/
 obj/
+publish/
+release/
+TestResults/
 script/
 watcher/
 build_log.txt

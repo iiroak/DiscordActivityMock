@@ -58,7 +58,6 @@ namespace DiscordActivityMockV2
 
     public static class UpdateChecker
     {
-        private const string CurrentVersion = "2.2.8";
         private const string GitHubApiUrl = "https://api.github.com/repos/iiroak/DiscordActivityMock/releases/latest";
         private const long MaxUpdateDownloadBytes = 700L * 1024 * 1024;
         private const long MaxUpdateArchiveBytes = 1024L * 1024 * 1024;
@@ -72,7 +71,7 @@ namespace DiscordActivityMockV2
             _downloadClient.DefaultRequestHeaders.Add("User-Agent", "DiscordActivityMock");
         }
 
-        public static string GetCurrentVersion() => CurrentVersion;
+        public static string GetCurrentVersion() => AppVersion.Current;
 
         public static async Task<UpdateCheckResult> CheckForUpdateAsync(CancellationToken cancellationToken = default)
         {
@@ -88,8 +87,8 @@ namespace DiscordActivityMockV2
                 if (release == null || string.IsNullOrWhiteSpace(release.TagName))
                     return new UpdateCheckResult(false, null);
 
-                string latestVersion = release.TagName.TrimStart('v', 'V');
-                if (!IsNewerVersion(latestVersion, CurrentVersion))
+                string latestVersion = AppVersion.Normalize(release.TagName);
+                if (!AppVersion.IsNewer(latestVersion, AppVersion.Current))
                     return new UpdateCheckResult(true, null);
 
                 return new UpdateCheckResult(true, new UpdateInfo(
@@ -384,24 +383,6 @@ namespace DiscordActivityMockV2
             Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
             uri.Scheme == Uri.UriSchemeHttps &&
             uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsNewerVersion(string latest, string current)
-        {
-            string Normalize(string value)
-            {
-                string[] parts = value.Split('.');
-                return parts.Length switch
-                {
-                    1 => value + ".0.0",
-                    2 => value + ".0",
-                    _ => value
-                };
-            }
-
-            return Version.TryParse(Normalize(latest), out Version? latestVersion) &&
-                   Version.TryParse(Normalize(current), out Version? currentVersion) &&
-                   latestVersion > currentVersion;
-        }
 
         public static void OpenReleasePage(string url)
         {

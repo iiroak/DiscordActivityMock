@@ -1,5 +1,6 @@
+; CI passes the release tag (for example v2026.11.0) and the matching executable name.
 #ifndef AppVersion
-  #define AppVersion "0.0.0"
+  #define AppVersion "v0.0.0"
 #endif
 
 #ifndef SourceDir
@@ -11,7 +12,7 @@
 #endif
 
 #ifndef AppExeName
-  #define AppExeName "DiscordActivityMock-v2.2.8-win-x86-Portable.exe"
+  #define AppExeName "DiscordActivityMock-" + AppVersion + "-win-x86-Portable.exe"
 #endif
 
 [Setup]

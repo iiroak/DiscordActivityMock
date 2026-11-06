@@ -27,7 +27,7 @@ on:
         default: false
         type: boolean
       tag_name:
-        description: 'Release tag (required for manual releases, e.g. v2.2.4)'
+        description: 'Release tag (required for manual releases, e.g. v2026.11.0)'
         required: false
         type: string
 
@@ -36,6 +36,7 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || github.ref_name }}
+  IS_RELEASE: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -68,11 +69,29 @@ jobs:
         }
         "@ | Out-File -FilePath global.json -Encoding utf8
 
+    - name: Validate app version
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        [xml]$project = Get-Content -LiteralPath DiscordActivityMockV2.csproj -Raw
+        $version = @($project.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ }) | Select-Object -First 1
+        if (-not $version) { throw "DiscordActivityMockV2.csproj must define <Version>." }
+        if ($version -notmatch '^\d{4}\.(?:[1-9]|1[0-2])\.\d+$') {
+          throw "Version '$version' must use calendar versioning YEAR.MONTH.N, for example 2026.11.0."
+        }
+        if ($env:IS_RELEASE -eq 'true' -and "v$version" -cne $env:RELEASE_TAG) {
+          throw "Release tag '$env:RELEASE_TAG' does not match <Version>$version</Version>. Update the project version or use tag v$version."
+        }
+        Write-Host "App version: $version"
+
     - name: Restore x86 dependencies
       run: dotnet restore DiscordActivityMockV2.csproj -r win-x86
 
     - name: Build x86
       run: dotnet build DiscordActivityMockV2.csproj -c Release -p:Platform=x86 -p:AssemblyName=DiscordActivityMock-${{ env.RELEASE_TAG }}-win-x86-Portable --no-restore
+
+    - name: Test core logic
+      run: dotnet test tests/DiscordActivityMock.Tests/DiscordActivityMock.Tests.csproj -c Release --logger "console;verbosity=normal"
 
     - name: Publish portable single-file executable
       if: github.event_name != 'pull_request'
@@ -153,8 +172,8 @@ jobs:
       env:
         RELEASE_TAG: ${{ github.event.inputs.tag_name }}
       run: |
-        if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-          echo "A valid tag such as v2.2.4 is required for a manual release." >&2
+        if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.([1-9]|1[0-2])\.[0-9]+$ ]]; then
+          echo "A calendar version tag such as v2026.11.0 is required for a manual release." >&2
           exit 1
         fi
         git fetch --depth=1 origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -171,7 +190,7 @@ jobs:
         path: release
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || github.ref_name }}
         files: |
