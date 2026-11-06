@@ -42,6 +42,7 @@ namespace DiscordActivityMockV2
         
         private string? _originalWordPadPath;  // Path to original WordPad backup
         private string? _sessionRootPath;
+        private FileStream? _sessionLock;
         private string? _workingRootPath;
         private string? _currentFolderPath;    // Current working folder path
         private string? _currentExePath;       // Current executable path
@@ -157,6 +158,9 @@ namespace DiscordActivityMockV2
                 return;
 
             _startupUpdateCheckStarted = true;
+            string currentVersion = AppVersion.Current;
+            string? processPath = Environment.ProcessPath;
+            _ = Task.Run(() => StartupCleanup.Run(currentVersion, processPath, tempSessionsPath));
             _ = CheckForUpdatesAsync();
         }
 
@@ -723,6 +727,8 @@ namespace DiscordActivityMockV2
         {
             try
             {
+                _sessionLock?.Dispose();
+                _sessionLock = null;
                 if (!string.IsNullOrEmpty(_sessionRootPath) && Directory.Exists(_sessionRootPath) && IsOwnedSessionRoot(_sessionRootPath))
                 {
                     Directory.Delete(_sessionRootPath, true);
@@ -750,6 +756,8 @@ namespace DiscordActivityMockV2
             string sessionRoot = Path.Combine(tempSessionsPath, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(sessionRoot);
             _sessionRootPath = sessionRoot;
+            // Startup cleanup in other instances skips sessions whose lock is held.
+            _sessionLock = StartupCleanup.AcquireSessionLock(sessionRoot);
             return sessionRoot;
         }
 

@@ -41,7 +41,8 @@ DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 
 [InstallDelete]
-Type: files; Name: "{app}\DiscordActivityMock-v*-win-x86-Portable.exe"
+; Each release ships versioned files (exe, dll, deps.json, runtimeconfig.json, pri); remove the previous set.
+Type: files; Name: "{app}\DiscordActivityMock-v*-win-x86-Portable.*"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
