@@ -31,7 +31,7 @@ Discord Activity Mock is a Windows utility that experiments with Discord's detec
 - 👁️ **Auto-Hide WordPad** - Automatically hide the WordPad dialog
 - ⏱️ **Auto-Stop Timer** - Set a timer to automatically stop the activity
 - 🌍 **Multi-language Support** - English, Spanish, and Portuguese
-- 🔄 **In-app updates** - Checks for new releases at startup and from About, then downloads the package matching the current installation
+- 🔄 **In-app updates** - Checks for new releases at startup and from About, then downloads the package matching the current installation and verifies its SHA-256 checksum
 
 ## 🚀 Getting Started
 
@@ -50,6 +50,10 @@ Each [Release](https://github.com/iiroak/DiscordActivityMock/releases) includes 
 No separate .NET installation is required. The initial window is 860×400 DIPs and scales for the monitor's DPI. Keep the versioned portable executable filename unchanged; WinUI single-file apps require the name they were built with. The app checks for releases at startup and from About; choosing Update downloads the matching package and starts the new version.
 
 Version 2.2.3 only opens the release page, so the first update to 2.2.4 must be downloaded there. Updates after 2.2.4 can be downloaded and applied in-app.
+
+Before installing an update, the app compares the download with the SHA-256 checksum that GitHub publishes for each release asset. If the checksum is missing or does not match, nothing is installed and the app offers the release page instead.
+
+Starting with 2026.11.0, versions use calendar versioning: `YEAR.MONTH.N`, where `N` counts the releases of that month from 0 (the scheme cloudflared uses). Versions 2.2.4 to 2.2.8 treat 2026.11.0 as newer and update to it in-app.
 
 ### Usage
 
@@ -79,6 +83,9 @@ cd DiscordActivityMock
 # Restore packages
 dotnet restore
 
+# Run the unit tests for the app logic in Core/
+dotnet test tests/DiscordActivityMock.Tests/DiscordActivityMock.Tests.csproj
+
 # Publish the standalone portable x86 executable
 dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o publish/win-x86-single-file
 
@@ -87,6 +94,12 @@ dotnet publish --configuration Release -r win-x86 -p:Platform=x86 -p:SelfContain
 ```
 
 GitHub Actions packages the single-file executable, the folder publication as a ZIP, and the folder publication as an Inno Setup installer.
+
+### Releasing
+
+1. Set `<Version>` in `DiscordActivityMockV2.csproj`, for example `2026.12.0`. The app reads its version from this value.
+2. Commit the change, then create and push the matching tag: `git tag v2026.12.0 && git push origin v2026.12.0`.
+3. GitHub Actions runs the tests, checks that the tag equals `v<Version>`, and publishes the three downloads.
 
 ## 🌍 Supported Languages
 
@@ -100,7 +113,9 @@ The application automatically detects your system language.
 
 ## Troubleshooting
 
-If a setup, activity, or update operation fails, check `%LOCALAPPDATA%\DiscordActivityMock\app.log`. The log is stored locally and rotated after it grows beyond 1 MiB.
+If a setup, activity, or update operation fails, check `%LOCALAPPDATA%\DiscordActivityMock\app.log`. The log includes the full error details, is stored locally, and is rotated after it grows beyond 1 MiB.
+
+At startup the app removes what earlier runs left behind: WordPad sessions from runs that closed unexpectedly, downloaded update files, portable update folders older than the running version, and single-file extraction folders of older versions in `%TEMP%\.net`. Anything in use or newer than the running version is kept.
 
 ## 📄 License
 

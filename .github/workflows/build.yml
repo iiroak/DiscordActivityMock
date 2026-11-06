@@ -132,8 +132,14 @@ jobs:
         Compress-Archive -Path (Join-Path $folderPublish '*') -DestinationPath (Join-Path $releaseDirectory "DiscordActivityMock-${env:RELEASE_TAG}-win-x86-Portable.zip") -CompressionLevel Optimal
 
         choco install innosetup --yes --no-progress
-        $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-        if (!(Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler was not found: $iscc" }
+        # Look in both Program Files folders so a newer Chocolatey package layout does not break the build.
+        $iscc = @(
+          (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+          (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+          (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
+          (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 7\ISCC.exe")
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $iscc) { throw "Inno Setup compiler was not found." }
         & $iscc "/DAppVersion=$env:RELEASE_TAG" "/DAppExeName=$portableExe" "/DSourceDir=$folderPublish" "/DOutputDir=$releaseDirectory" (Join-Path $env:GITHUB_WORKSPACE "installer\DiscordActivityMock.iss")
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler exited with code $LASTEXITCODE." }
 
