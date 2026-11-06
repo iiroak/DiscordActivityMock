@@ -17,7 +17,17 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Keep single-file releases compact and avoid requiring crossgen packages. -->
     <PublishReadyToRun>false</PublishReadyToRun>
+    <!-- The test project and local publish output live inside this folder; keep them out of the app. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;publish\**;release\**</DefaultItemExcludes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+    <Content Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+    <Page Remove="tests\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\SplashScreen.scale-200.png" />

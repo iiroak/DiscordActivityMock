@@ -5,6 +5,8 @@ VisualStudioVersion = 17.14.36804.6 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiscordActivityMockV2", "DiscordActivityMockV2.csproj", "{3380C9BE-7B7F-4F1E-9093-E4EA4181EDC2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiscordActivityMock.Tests", "tests\DiscordActivityMock.Tests\DiscordActivityMock.Tests.csproj", "{6F1E4D2A-9B3C-4E8F-A1D2-7C5B9E0F3A41}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x86 = Debug|x86
@@ -17,6 +19,10 @@ Global
 		{3380C9BE-7B7F-4F1E-9093-E4EA4181EDC2}.Release|x86.ActiveCfg = Release|x86
 		{3380C9BE-7B7F-4F1E-9093-E4EA4181EDC2}.Release|x86.Build.0 = Release|x86
 		{3380C9BE-7B7F-4F1E-9093-E4EA4181EDC2}.Release|x86.Deploy.0 = Release|x86
+		{6F1E4D2A-9B3C-4E8F-A1D2-7C5B9E0F3A41}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6F1E4D2A-9B3C-4E8F-A1D2-7C5B9E0F3A41}.Debug|x86.Build.0 = Debug|Any CPU
+		{6F1E4D2A-9B3C-4E8F-A1D2-7C5B9E0F3A41}.Release|x86.ActiveCfg = Release|Any CPU
+		{6F1E4D2A-9B3C-4E8F-A1D2-7C5B9E0F3A41}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
