@@ -37,8 +37,16 @@ namespace DiscordActivityMockV2
                 return;
 
             string executablePath = processPath;
-            Try("Clean old portable updates", () => CleanOldPortableUpdates(executablePath, currentVersion, localAppData));
-            Try("Clean old single-file extractions", () => CleanOldExtractions(GetExtractionBases(tempPath), currentVersion));
+            Try("Clean old portable updates and extractions", () =>
+            {
+                PortableRoot root = PortableLayout.Resolve(executablePath, localAppData);
+                CleanOldPortableUpdates(executablePath, root, currentVersion);
+
+                // The original executable stays the user's shortcut and extracts itself on every launch before it
+                // redirects, so its extraction is kept. Without a known original folder, skip this cleanup.
+                if (root.RootDirectory != null)
+                    CleanOldExtractions(GetExtractionBases(tempPath), currentVersion, GetLauncherNames(root.RootDirectory));
+            });
         }
 
         /// <summary>Held open with no sharing while the session exists, so other instances skip it.</summary>
@@ -88,11 +96,10 @@ namespace DiscordActivityMockV2
             }
         }
 
-        internal static void CleanOldPortableUpdates(string processPath, string currentVersion, string localAppData)
+        internal static void CleanOldPortableUpdates(string processPath, PortableRoot root, string currentVersion)
         {
-            PortableRoot root = PortableLayout.Resolve(processPath, localAppData);
             string currentDirectory = Path.GetDirectoryName(Path.GetFullPath(processPath))!;
-            foreach (string? updatesDirectory in new[] { root.PreferredUpdatesDirectory, root.FallbackUpdatesDirectory })
+            foreach (string updatesDirectory in GetUpdatesDirectories(processPath, root))
             {
                 foreach (string directory in FindObsoleteUpdateFolders(updatesDirectory, currentVersion, currentDirectory))
                 {
@@ -100,6 +107,45 @@ namespace DiscordActivityMockV2
                         TryDeleteDirectory(directory);
                 }
             }
+        }
+
+        /// <summary>
+        /// The root's updates folders plus every "updates" folder on the way from the running executable up to the
+        /// root, because versions before 2026.11.0 nested each update inside the previous one (updates\a\updates\b).
+        /// </summary>
+        internal static List<string> GetUpdatesDirectories(string processPath, PortableRoot root)
+        {
+            var directories = new List<string>();
+            void Add(string? candidate)
+            {
+                if (!string.IsNullOrWhiteSpace(candidate) && !directories.Any(existing => PathGuard.IsSamePath(existing, candidate)))
+                    directories.Add(candidate);
+            }
+
+            Add(root.PreferredUpdatesDirectory);
+            Add(root.FallbackUpdatesDirectory);
+
+            string boundary = root.RootDirectory ?? root.FallbackUpdatesDirectory;
+            for (string? directory = Path.GetDirectoryName(Path.GetFullPath(processPath));
+                 directory != null && PathGuard.IsWithin(boundary, directory);
+                 directory = Path.GetDirectoryName(directory))
+            {
+                Add(Path.Combine(directory, PortableLayout.UpdatesFolderName));
+            }
+
+            return directories;
+        }
+
+        /// <summary>Names (without .exe) of the portable executables in the folder the user starts the app from.</summary>
+        internal static HashSet<string> GetLauncherNames(string? rootDirectory)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(rootDirectory) && Directory.Exists(rootDirectory))
+            {
+                foreach (string executable in Directory.GetFiles(rootDirectory, "DiscordActivityMock-v*-win-x86-Portable.exe"))
+                    names.Add(Path.GetFileNameWithoutExtension(executable));
+            }
+            return names;
         }
 
         /// <summary>
@@ -134,8 +180,11 @@ namespace DiscordActivityMockV2
             return bases;
         }
 
-        /// <summary>Single-file releases extract to &lt;base&gt;\DiscordActivityMock-v&lt;version&gt;-win-x86-Portable.</summary>
-        internal static void CleanOldExtractions(IEnumerable<string> extractionBases, string currentVersion)
+        /// <summary>
+        /// Single-file releases extract to &lt;base&gt;\DiscordActivityMock-v&lt;version&gt;-win-x86-Portable.
+        /// Folders named in <paramref name="keepNames"/> are kept even when older.
+        /// </summary>
+        internal static void CleanOldExtractions(IEnumerable<string> extractionBases, string currentVersion, ISet<string> keepNames)
         {
             foreach (string extractionBase in extractionBases)
             {
@@ -147,6 +196,7 @@ namespace DiscordActivityMockV2
                     string name = Path.GetFileName(directory);
                     if (TryParseExtractionFolderName(name, out string version) &&
                         AppVersion.IsNewer(currentVersion, version) &&
+                        !keepNames.Contains(name) &&
                         !IsProcessRunning(name))
                         TryDeleteDirectory(directory);
                 }
@@ -164,8 +214,9 @@ namespace DiscordActivityMockV2
             return true;
         }
 
+        /// <summary>Checks nested folders too: older layouts kept newer updates inside older ones.</summary>
         private static bool IsAnyExecutableRunning(string directory) =>
-            Directory.GetFiles(directory, "*.exe", SearchOption.TopDirectoryOnly)
+            Directory.GetFiles(directory, "*.exe", SearchOption.AllDirectories)
                      .Any(executable => IsProcessRunning(Path.GetFileNameWithoutExtension(executable)));
 
         private static bool IsProcessRunning(string processName)

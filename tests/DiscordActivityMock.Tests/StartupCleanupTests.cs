@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Xunit;
 
@@ -96,18 +97,49 @@ namespace DiscordActivityMockV2.Tests
         {
             string extractionBase = _temp.CreateDirectory(".net");
             string older = _temp.CreateDirectory(".net", "DiscordActivityMock-v2.2.8-win-x86-Portable", "abc");
+            string launcher = _temp.CreateDirectory(".net", "DiscordActivityMock-v2.2.4-win-x86-Portable");
             string same = _temp.CreateDirectory(".net", "DiscordActivityMock-v2026.11.0-win-x86-Portable");
             string newer = _temp.CreateDirectory(".net", "DiscordActivityMock-v2026.12.0-win-x86-Portable");
             string pullRequest = _temp.CreateDirectory(".net", "DiscordActivityMock-vpr-12-win-x86-Portable");
             string otherApp = _temp.CreateDirectory(".net", "OtherApp");
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "DiscordActivityMock-v2.2.4-win-x86-Portable" };
 
-            StartupCleanup.CleanOldExtractions(new[] { extractionBase }, "2026.11.0");
+            StartupCleanup.CleanOldExtractions(new[] { extractionBase }, "2026.11.0", keep);
 
             Assert.False(Directory.Exists(Path.GetDirectoryName(older)));
+            Assert.True(Directory.Exists(launcher)); // the user's original executable still extracts itself here
             Assert.True(Directory.Exists(same));
             Assert.True(Directory.Exists(newer));
             Assert.True(Directory.Exists(pullRequest));
             Assert.True(Directory.Exists(otherApp));
+        }
+
+        [Fact]
+        public void GetLauncherNamesListsThePortableExecutablesInTheRootFolder()
+        {
+            string root = _temp.CreateDirectory("root");
+            _temp.CreateFile(Path.Combine("root", "DiscordActivityMock-v2.2.4-win-x86-Portable.exe"));
+            _temp.CreateFile(Path.Combine("root", "notes.txt"));
+
+            Assert.Equal(new[] { "DiscordActivityMock-v2.2.4-win-x86-Portable" }, StartupCleanup.GetLauncherNames(root));
+            Assert.Empty(StartupCleanup.GetLauncherNames(null));
+        }
+
+        [Fact]
+        public void GetUpdatesDirectoriesIncludesFoldersNestedByOlderVersions()
+        {
+            const string root = @"C:\Games\DAM";
+            const string localAppData = @"C:\Users\me\AppData\Local";
+            string processPath = root + @"\updates\2.2.5-" + Id1 + @"\updates\2026.11.0-" + Id2 + @"\app.exe";
+            PortableRoot portableRoot = PortableLayout.Resolve(processPath, localAppData);
+
+            List<string> directories = StartupCleanup.GetUpdatesDirectories(processPath, portableRoot);
+
+            Assert.Contains(root + @"\updates", directories);
+            Assert.Contains(root + @"\updates\2.2.5-" + Id1 + @"\updates", directories);
+            Assert.Contains(portableRoot.FallbackUpdatesDirectory, directories);
+            Assert.DoesNotContain(directories, directory => !directory.StartsWith(root, StringComparison.OrdinalIgnoreCase) &&
+                                                            !directory.StartsWith(localAppData, StringComparison.OrdinalIgnoreCase));
         }
 
         [Theory]

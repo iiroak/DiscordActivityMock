@@ -14,15 +14,28 @@ namespace DiscordActivityMockV2
         /// <summary>The marker points to a newer copy; start it and exit.</summary>
         Redirect,
         /// <summary>The marker target is missing, older, or unknown; delete the marker and start normally.</summary>
-        DeleteMarker
+        DeleteMarker,
+        /// <summary>
+        /// This executable is an update copy and nothing newer is recorded; point the marker at it so the
+        /// original executable (of any version) opens this copy.
+        /// </summary>
+        PointToCurrent
     }
 
     /// <summary>
     /// Identifies a portable copy by the folder the user originally started it from.
-    /// <paramref name="Key"/> names the redirect marker; updates go to <paramref name="PreferredUpdatesDirectory"/>
-    /// (next to the original executable) or, when that folder is not writable, to <paramref name="FallbackUpdatesDirectory"/>.
+    /// <paramref name="Key"/> names the redirect marker. <paramref name="RootDirectory"/> is that folder, or null when
+    /// the app runs from the %LOCALAPPDATA% fallback and the folder is only known by its key. Updates go to
+    /// <paramref name="PreferredUpdatesDirectory"/> (next to the original executable) or, when that folder is not
+    /// writable, to <paramref name="FallbackUpdatesDirectory"/>. <paramref name="IsUpdateCopy"/> is true when the
+    /// running executable is an in-app update rather than the original download.
     /// </summary>
-    internal sealed record PortableRoot(string Key, string? PreferredUpdatesDirectory, string FallbackUpdatesDirectory);
+    internal sealed record PortableRoot(
+        string Key,
+        string? RootDirectory,
+        string? PreferredUpdatesDirectory,
+        string FallbackUpdatesDirectory,
+        bool IsUpdateCopy);
 
     /// <summary>
     /// Layout of in-app portable updates:
@@ -88,14 +101,17 @@ namespace DiscordActivityMockV2
                 IsDirectoryKey(Path.GetFileName(keyDirectory)) &&
                 PathGuard.IsSamePath(Path.GetDirectoryName(keyDirectory), fallbackBase))
             {
-                return new PortableRoot(Path.GetFileName(keyDirectory).ToUpperInvariant(), null, keyDirectory);
+                return new PortableRoot(Path.GetFileName(keyDirectory).ToUpperInvariant(), null, null, keyDirectory, IsUpdateCopy: true);
             }
 
             string key = GetDirectoryKey(rootDirectory);
+            string executableDirectory = Path.GetDirectoryName(Path.GetFullPath(processPath))!;
             return new PortableRoot(
                 key,
+                rootDirectory,
                 Path.Combine(rootDirectory, UpdatesFolderName),
-                Path.Combine(fallbackBase, key));
+                Path.Combine(fallbackBase, key),
+                IsUpdateCopy: !PathGuard.IsSamePath(rootDirectory, executableDirectory));
         }
 
         /// <summary>Same key format that versions 2.2.4 to 2.2.8 used, so their markers stay valid.</summary>
@@ -105,20 +121,27 @@ namespace DiscordActivityMockV2
         public static bool IsDirectoryKey(string? name) =>
             name is { Length: 16 } && name.All(char.IsAsciiHexDigit);
 
+        /// <summary>
+        /// Decides what to do with the redirect marker at startup. <paramref name="targetExecutablePath"/> is null when
+        /// there is no marker. Versions 2.2.4 to 2.2.8 chained markers per update folder, so an update copy that finds
+        /// an older or missing target takes over the marker instead of deleting it.
+        /// </summary>
         public static RedirectDecision DecideRedirect(
             string currentVersion,
             string currentExecutablePath,
-            string targetExecutablePath,
+            string? targetExecutablePath,
             string? targetVersion,
-            bool targetExists)
+            bool targetExists,
+            bool isUpdateCopy)
         {
-            if (PathGuard.IsSamePath(currentExecutablePath, targetExecutablePath))
+            if (targetExecutablePath != null && PathGuard.IsSamePath(currentExecutablePath, targetExecutablePath))
                 return RedirectDecision.Keep;
 
-            if (!targetExists || targetVersion == null || !AppVersion.IsNewer(targetVersion, currentVersion))
-                return RedirectDecision.DeleteMarker;
+            if (targetExecutablePath != null && targetExists && targetVersion != null &&
+                AppVersion.IsNewer(targetVersion, currentVersion))
+                return RedirectDecision.Redirect;
 
-            return RedirectDecision.Redirect;
+            return isUpdateCopy ? RedirectDecision.PointToCurrent : RedirectDecision.DeleteMarker;
         }
     }
 }

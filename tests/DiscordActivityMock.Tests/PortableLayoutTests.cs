@@ -60,8 +60,13 @@ namespace DiscordActivityMockV2.Tests
         {
             PortableRoot original = PortableLayout.Resolve(Root + @"\" + Exe, LocalAppData);
             PortableRoot updated = PortableLayout.Resolve(Root + @"\updates\2026.12.0-" + Id1 + @"\" + Exe, LocalAppData);
+            PortableRoot legacyNested = PortableLayout.Resolve(
+                Root + @"\updates\2.2.5-" + Id1 + @"\updates\2026.11.0-" + Id2 + @"\" + Exe, LocalAppData);
 
-            Assert.Equal(original, updated);
+            Assert.Equal(original with { IsUpdateCopy = true }, updated);
+            Assert.Equal(updated, legacyNested);
+            Assert.False(original.IsUpdateCopy);
+            Assert.Equal(Root, original.RootDirectory);
             Assert.Equal(Root + @"\updates", original.PreferredUpdatesDirectory);
             Assert.Equal(Path.Combine(LocalAppData, "DiscordActivityMock", "PortableUpdates", original.Key), original.FallbackUpdatesDirectory);
         }
@@ -76,8 +81,10 @@ namespace DiscordActivityMockV2.Tests
             PortableRoot root = PortableLayout.Resolve(processPath, LocalAppData);
 
             Assert.Equal(key, root.Key);
+            Assert.Null(root.RootDirectory);
             Assert.Null(root.PreferredUpdatesDirectory);
             Assert.Equal(keyDirectory, root.FallbackUpdatesDirectory);
+            Assert.True(root.IsUpdateCopy);
         }
 
         [Fact]
@@ -90,19 +97,28 @@ namespace DiscordActivityMockV2.Tests
         }
 
         [Theory]
-        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\A\APP.EXE", "2026.12.0", true, "Keep")]
-        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.12.0", true, "Redirect")]
-        [InlineData("2.2.8", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, "Redirect")]
-        [InlineData("2026.12.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, "DeleteMarker")]
-        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, "DeleteMarker")]
-        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", null, true, "DeleteMarker")]
-        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.12.0", false, "DeleteMarker")]
-        public void DecideRedirectOnlyOpensExistingNewerCopies(
-            string currentVersion, string currentPath, string targetPath, string? targetVersion, bool targetExists, string expected)
+        // Original executable (not an update copy)
+        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\A\APP.EXE", "2026.12.0", true, false, "Keep")]
+        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.12.0", true, false, "Redirect")]
+        [InlineData("2.2.8", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, false, "Redirect")]
+        [InlineData("2026.12.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, false, "DeleteMarker")]
+        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.11.0", true, false, "DeleteMarker")]
+        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", null, true, false, "DeleteMarker")]
+        [InlineData("2026.11.0", @"C:\a\app.exe", @"C:\a\updates\x\app.exe", "2026.12.0", false, false, "DeleteMarker")]
+        [InlineData("2026.11.0", @"C:\a\app.exe", null, null, false, false, "DeleteMarker")]
+        // Update copy: a legacy chain points the root marker at an older update; take it over instead of deleting it
+        [InlineData("2026.11.0", @"C:\a\updates\y\app.exe", @"C:\a\updates\x\app.exe", "1.0.0", true, true, "PointToCurrent")]
+        [InlineData("2026.11.0", @"C:\a\updates\y\app.exe", @"C:\a\updates\x\app.exe", null, false, true, "PointToCurrent")]
+        [InlineData("2026.11.0", @"C:\a\updates\y\app.exe", null, null, false, true, "PointToCurrent")]
+        [InlineData("2026.11.0", @"C:\a\updates\y\app.exe", @"C:\a\updates\y\app.exe", "2026.11.0", true, true, "Keep")]
+        [InlineData("2026.11.0", @"C:\a\updates\y\app.exe", @"C:\a\updates\z\app.exe", "2026.12.0", true, true, "Redirect")]
+        public void DecideRedirectOpensNewerCopiesAndRepairsLegacyChains(
+            string currentVersion, string currentPath, string? targetPath, string? targetVersion,
+            bool targetExists, bool isUpdateCopy, string expected)
         {
             // RedirectDecision is internal, so the expected value is passed by name.
             Assert.Equal(Enum.Parse<RedirectDecision>(expected),
-                         PortableLayout.DecideRedirect(currentVersion, currentPath, targetPath, targetVersion, targetExists));
+                         PortableLayout.DecideRedirect(currentVersion, currentPath, targetPath, targetVersion, targetExists, isUpdateCopy));
         }
     }
 }

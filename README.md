@@ -115,7 +115,7 @@ The application automatically detects your system language.
 
 If a setup, activity, or update operation fails, check `%LOCALAPPDATA%\DiscordActivityMock\app.log`. The log includes the full error details, is stored locally, and is rotated after it grows beyond 1 MiB.
 
-At startup the app removes what earlier runs left behind: WordPad sessions from runs that closed unexpectedly, downloaded update files, portable update folders older than the running version, and single-file extraction folders of older versions in `%TEMP%\.net`. Anything in use or newer than the running version is kept.
+At startup the app removes what earlier runs left behind: WordPad sessions from runs that closed unexpectedly, downloaded update files, portable update folders older than the running version, and single-file extraction folders of older versions in `%TEMP%\.net`. Anything in use, newer than the running version, or belonging to the portable executable you start the app from is kept.
 
 ## 📄 License
 

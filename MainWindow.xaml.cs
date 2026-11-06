@@ -319,6 +319,8 @@ namespace DiscordActivityMockV2
             string downloadedPath = download.FilePath;
             string? updateDirectory = null;
             bool redirectSaved = false;
+            // The marker is shared by the original executable and its update copies; restore it if the update fails.
+            string? previousRedirect = UpdateChecker.ReadPortableUpdateRedirect(currentExecutable);
             try
             {
                 if (packageKind == UpdatePackageKind.Installed)
@@ -371,7 +373,7 @@ namespace DiscordActivityMockV2
             {
                 AppLog.Error("Apply update", ex);
                 if (redirectSaved)
-                    UpdateChecker.RemovePortableUpdateRedirect(currentExecutable);
+                    UpdateChecker.RestorePortableUpdateRedirect(currentExecutable, previousRedirect);
                 if (updateDirectory != null)
                     UpdateChecker.DeletePortableUpdateDirectory(updateDirectory);
                 UpdateChecker.DeleteDownloadedUpdate(downloadedPath);
@@ -573,7 +575,8 @@ namespace DiscordActivityMockV2
 
             HideSettingsBtn.IsEnabled = canConfigure;
             TimerSettingsBtn.IsEnabled = canConfigure;
-            StartActivityBtn.IsEnabled = canConfigure;
+            // A catalog reload replaces the selected activity, so starting waits until it finishes.
+            StartActivityBtn.IsEnabled = canChangeActivity;
             StopActivityBtn.IsEnabled = _isActivityRunning;
 
             LoadingRing.IsActive = _isPreparingWordPad || _isCatalogLoading;
@@ -1327,7 +1330,7 @@ namespace DiscordActivityMockV2
 
         private async void StartActivityBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_isStarting || _isActivityRunning)
+            if (_isStarting || _isActivityRunning || _isCatalogLoading)
                 return;
 
             _isStarting = true;

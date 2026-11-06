@@ -396,17 +396,40 @@ namespace DiscordActivityMockV2
             File.Move(temporaryMarker, markerPath, overwrite: true);
         }
 
-        public static void RemovePortableUpdateRedirect(string currentExecutablePath)
+        /// <summary>Returns the target recorded for this portable copy, or null when there is none.</summary>
+        public static string? ReadPortableUpdateRedirect(string currentExecutablePath)
         {
             try
             {
                 string markerPath = GetPortableRedirectMarkerPath(currentExecutablePath);
-                if (File.Exists(markerPath))
-                    File.Delete(markerPath);
+                return File.Exists(markerPath) ? File.ReadAllText(markerPath).Trim() : null;
             }
             catch (Exception ex)
             {
-                AppLog.Error("Remove portable update redirect", ex);
+                AppLog.Error("Read portable update redirect", ex);
+                return null;
+            }
+        }
+
+        /// <summary>Puts back the marker read by <see cref="ReadPortableUpdateRedirect"/> after a failed update.</summary>
+        public static void RestorePortableUpdateRedirect(string currentExecutablePath, string? previousTarget)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(previousTarget))
+                {
+                    string markerPath = GetPortableRedirectMarkerPath(currentExecutablePath);
+                    if (File.Exists(markerPath))
+                        File.Delete(markerPath);
+                }
+                else
+                {
+                    SavePortableUpdateRedirect(currentExecutablePath, previousTarget);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Restore portable update redirect", ex);
             }
         }
 
@@ -419,20 +442,21 @@ namespace DiscordActivityMockV2
 
             try
             {
-                string markerPath = GetPortableRedirectMarkerPath(currentExecutablePath);
-                if (!File.Exists(markerPath))
-                    return false;
+                PortableRoot root = PortableLayout.Resolve(currentExecutablePath, LocalAppData);
+                string markerPath = GetPortableRedirectMarkerPath(root);
+                string? targetExecutablePath = File.Exists(markerPath) ? File.ReadAllText(markerPath).Trim() : null;
+                bool targetExists = targetExecutablePath != null &&
+                                    Path.IsPathFullyQualified(targetExecutablePath) &&
+                                    File.Exists(targetExecutablePath);
+                string? targetVersion = targetExists ? ReadExecutableVersion(targetExecutablePath!) : null;
 
-                string targetExecutablePath = File.ReadAllText(markerPath).Trim();
-                bool targetExists = Path.IsPathFullyQualified(targetExecutablePath) && File.Exists(targetExecutablePath);
-                string? targetVersion = targetExists ? ReadExecutableVersion(targetExecutablePath) : null;
-
-                switch (PortableLayout.DecideRedirect(AppVersion.Current, currentExecutablePath, targetExecutablePath, targetVersion, targetExists))
+                switch (PortableLayout.DecideRedirect(
+                            AppVersion.Current, currentExecutablePath, targetExecutablePath, targetVersion, targetExists, root.IsUpdateCopy))
                 {
                     case RedirectDecision.Redirect:
                         using (Process? process = Process.Start(new ProcessStartInfo
                         {
-                            FileName = targetExecutablePath,
+                            FileName = targetExecutablePath!,
                             WorkingDirectory = Path.GetDirectoryName(targetExecutablePath)!,
                             UseShellExecute = true
                         }))
@@ -440,8 +464,13 @@ namespace DiscordActivityMockV2
                             return process != null;
                         }
 
+                    case RedirectDecision.PointToCurrent:
+                        SavePortableUpdateRedirect(currentExecutablePath, currentExecutablePath);
+                        return false;
+
                     case RedirectDecision.DeleteMarker:
-                        File.Delete(markerPath);
+                        if (targetExecutablePath != null)
+                            File.Delete(markerPath);
                         return false;
 
                     default:
@@ -482,11 +511,11 @@ namespace DiscordActivityMockV2
         public static string GetPortableExecutableName(string version) =>
             $"DiscordActivityMock-v{SanitizeVersionForPath(version)}-win-x86-Portable.exe";
 
-        private static string GetPortableRedirectMarkerPath(string processPath)
-        {
-            string key = PortableLayout.Resolve(processPath, LocalAppData).Key;
-            return Path.Combine(LocalAppData, "DiscordActivityMock", "PortableRedirects", key + ".txt");
-        }
+        private static string GetPortableRedirectMarkerPath(string processPath) =>
+            GetPortableRedirectMarkerPath(PortableLayout.Resolve(processPath, LocalAppData));
+
+        private static string GetPortableRedirectMarkerPath(PortableRoot root) =>
+            Path.Combine(LocalAppData, "DiscordActivityMock", "PortableRedirects", root.Key + ".txt");
 
         private static void DeleteTemporaryDirectory(string? path)
         {
