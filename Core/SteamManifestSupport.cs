@@ -101,6 +101,29 @@ namespace DiscordActivityMockV2
                 var createdDirectories = new List<string>();
                 var createdDirectorySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 bool createdManifest = false;
+
+                // Undo only what this attempt created; files that already existed are never touched.
+                void Rollback()
+                {
+                    if (createdManifest)
+                    {
+                        try { File.Delete(manifestPath); } catch { }
+                    }
+                    foreach (string createdFile in createdFiles)
+                    {
+                        try { File.Delete(createdFile); } catch { }
+                    }
+                    // Deepest folders first, so each non-recursive delete finds an empty folder.
+                    foreach (string createdDirectory in createdDirectories.OrderByDescending(directory => directory.Length))
+                    {
+                        try { Directory.Delete(createdDirectory, recursive: false); } catch { }
+                    }
+                    if (createdGameDirectory)
+                    {
+                        try { Directory.Delete(gameDirectory, recursive: true); } catch { }
+                    }
+                }
+
                 try
                 {
                     if (!gameDirectoryExists)
@@ -167,42 +190,13 @@ namespace DiscordActivityMockV2
                 }
                 catch (UnauthorizedAccessException ex)
                 {
+                    // Try the next Steam library; report the access error only if none works.
                     accessError = ex;
-                    if (createdManifest)
-                    {
-                        try { File.Delete(manifestPath); } catch { }
-                    }
-                    foreach (string createdFile in createdFiles)
-                    {
-                        try { File.Delete(createdFile); } catch { }
-                    }
-                    foreach (string createdDirectory in createdDirectories)
-                    {
-                        try { Directory.Delete(createdDirectory, recursive: false); } catch { }
-                    }
-                    if (createdGameDirectory)
-                    {
-                        try { Directory.Delete(gameDirectory, recursive: true); } catch { }
-                    }
+                    Rollback();
                 }
                 catch
                 {
-                    if (createdManifest)
-                    {
-                        try { File.Delete(manifestPath); } catch { }
-                    }
-                    foreach (string createdFile in createdFiles)
-                    {
-                        try { File.Delete(createdFile); } catch { }
-                    }
-                    foreach (string createdDirectory in createdDirectories)
-                    {
-                        try { Directory.Delete(createdDirectory, recursive: false); } catch { }
-                    }
-                    if (createdGameDirectory)
-                    {
-                        try { Directory.Delete(gameDirectory, recursive: true); } catch { }
-                    }
+                    Rollback();
                     throw;
                 }
             }
@@ -236,7 +230,8 @@ namespace DiscordActivityMockV2
             if (string.IsNullOrWhiteSpace(installDir) || installDir is "." or ".." ||
                 installDir.Contains('/') || installDir.Contains('\\') ||
                 installDir.EndsWith(' ') || installDir.EndsWith('.') ||
-                installDir.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                installDir.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                ActivityRules.IsReservedDeviceName(installDir))
                 throw new ArgumentException("The Steam manifest installDir must be one valid folder name.");
         }
 
@@ -330,35 +325,7 @@ namespace DiscordActivityMockV2
                    Directory.GetDirectories(destinationFolder, "*", SearchOption.AllDirectories).Length == 0;
         }
 
-        private static bool IsPortableExecutable(string path)
-        {
-            try
-            {
-                using var stream = File.OpenRead(path);
-                if (stream.Length < 64)
-                    return false;
-
-                using var reader = new BinaryReader(stream);
-                if (reader.ReadUInt16() != 0x5A4D)
-                    return false;
-
-                stream.Position = 0x3C;
-                int peOffset = reader.ReadInt32();
-                if (peOffset < 0 || peOffset > stream.Length - sizeof(uint))
-                    return false;
-
-                stream.Position = peOffset;
-                return reader.ReadUInt32() == 0x00004550;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-        }
+        private static bool IsPortableExecutable(string path) => PeImage.TryReadMachine(path, out _);
 
         private static string GetDestinationRelativePath(
             string sourceFolder,

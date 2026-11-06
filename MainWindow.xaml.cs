@@ -720,34 +720,9 @@ namespace DiscordActivityMockV2
             return sessionRoot;
         }
 
-        private static bool IsOwnedSessionRoot(string path)
-        {
-            try
-            {
-                string root = Path.GetFullPath(tempSessionsPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                string candidate = Path.GetFullPath(path);
-                return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase) &&
-                       Guid.TryParseExact(Path.GetFileName(candidate), "N", out _);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool IsPathWithin(string root, string path)
-        {
-            try
-            {
-                string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                string fullPath = Path.GetFullPath(path);
-                return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        private static bool IsOwnedSessionRoot(string path) =>
+            PathGuard.IsSamePath(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)), tempSessionsPath) &&
+            Guid.TryParseExact(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)), "N", out _);
 
         private static string? ResolveBundledAssetPath(string relativePath)
         {
@@ -766,61 +741,19 @@ namespace DiscordActivityMockV2
                 .FirstOrDefault(File.Exists);
         }
 
-        private static string ResolveChildPath(string root, string relativePath)
-        {
-            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
-                throw new ArgumentException("The folder must be a relative path.");
-
-            string normalized = relativePath.Replace('/', Path.DirectorySeparatorChar)
-                                            .Replace('\\', Path.DirectorySeparatorChar);
-            var segments = normalized.Split(Path.DirectorySeparatorChar);
-            if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || segment == "." || segment == ".." ||
-                                        segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                                        segment.EndsWith(' ') || segment.EndsWith('.')))
-                throw new ArgumentException("The folder name contains an invalid path segment.");
-
-            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            string fullPath = Path.GetFullPath(Path.Combine(fullRoot, normalized));
-            if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("The folder must remain inside the private working directory.");
-            return fullPath;
-        }
-
-        private static string NormalizeExecutableName(string input)
-        {
-            string name = input.Trim();
-            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                name = name[..^4];
-
-            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." ||
-                Path.IsPathRooted(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                name.EndsWith(' ') || name.EndsWith('.') || name.Contains('/') || name.Contains('\\'))
-                throw new ArgumentException("The executable name is invalid.");
-
-            string deviceName = name.Split('.')[0];
-            if (new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" }
-                .Contains(deviceName, StringComparer.OrdinalIgnoreCase))
-                throw new ArgumentException("The executable name is reserved by Windows.");
-
-            return name;
-        }
-
         /// <summary>
         /// Resets the working folder to original WordPad state for re-renaming
         /// </summary>
         private bool ResetToOriginal()
         {
             if (string.IsNullOrEmpty(_originalWordPadPath) || !Directory.Exists(_originalWordPadPath) ||
-                string.IsNullOrEmpty(_workingRootPath) || !IsOwnedSessionRoot(_sessionRootPath ?? ""))
+                string.IsNullOrEmpty(_workingRootPath) || string.IsNullOrEmpty(_sessionRootPath) ||
+                !IsOwnedSessionRoot(_sessionRootPath) || !PathGuard.IsWithin(_sessionRootPath, _workingRootPath))
                 return false;
 
             try
             {
                 string fullWorkingRoot = Path.GetFullPath(_workingRootPath);
-                string fullSessionRoot = Path.GetFullPath(_sessionRootPath!);
-                if (!fullWorkingRoot.StartsWith(fullSessionRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    return false;
-
                 if (Directory.Exists(fullWorkingRoot))
                     Directory.Delete(fullWorkingRoot, true);
 
@@ -836,8 +769,9 @@ namespace DiscordActivityMockV2
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Error("Restore isolated WordPad copy", ex);
                 return false;
             }
         }
@@ -979,7 +913,7 @@ namespace DiscordActivityMockV2
                 
                 CopyWordPadFiles(pathWordPad, backupPath);
 
-                ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
+                PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
                 return backupPath;
             }
             catch (Exception ex)
@@ -1020,7 +954,7 @@ namespace DiscordActivityMockV2
                     File.Copy(sourceFile, destinationFile, overwrite: true);
                 }
 
-                ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
+                PeImage.ValidateWordPadExecutable(Path.Combine(backupPath, "wordpad.exe"));
                 return backupPath;
             }
             catch (Exception ex)
@@ -1037,40 +971,13 @@ namespace DiscordActivityMockV2
         private void SetupWordPadPaths(string backupPath)
         {
             if (string.IsNullOrEmpty(_sessionRootPath) || !IsOwnedSessionRoot(_sessionRootPath) ||
-                !Path.GetFullPath(backupPath).StartsWith(Path.GetFullPath(_sessionRootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                !PathGuard.IsWithin(_sessionRootPath, backupPath))
                 throw new InvalidOperationException("The WordPad files are outside the private session directory.");
 
             _originalWordPadPath = backupPath;
             _workingRootPath = Path.Combine(_sessionRootPath, "Working");
             if (!ResetToOriginal())
                 throw new IOException("Could not create an isolated working copy of WordPad.");
-        }
-
-        private static void ValidateWordPadExecutable(string executablePath)
-        {
-            if (!File.Exists(executablePath))
-                throw new FileNotFoundException("WordPad executable was not found in the source files.");
-
-            using var stream = File.OpenRead(executablePath);
-            using var reader = new BinaryReader(stream);
-            if (stream.Length < 64 || reader.ReadUInt16() != 0x5A4D)
-                throw new InvalidDataException("The WordPad executable is not a valid Windows application.");
-
-            stream.Position = 0x3C;
-            int peOffset = reader.ReadInt32();
-            if (peOffset < 0 || peOffset > stream.Length - 6)
-                throw new InvalidDataException("The WordPad executable has an invalid PE header.");
-
-            stream.Position = peOffset;
-            if (reader.ReadUInt32() != 0x00004550)
-                throw new InvalidDataException("The WordPad executable has an invalid PE signature.");
-
-            ushort machine = reader.ReadUInt16();
-            if (machine is not (0x014c or 0x8664))
-                throw new InvalidDataException("This WordPad copy must be an x86 or x64 executable.");
-
-            if (machine == 0x8664 && RuntimeInformation.OSArchitecture == Architecture.X86)
-                throw new PlatformNotSupportedException("This WordPad copy requires 64-bit Windows.");
         }
 
         private async void WordPadSystemBtn_Click(object sender, RoutedEventArgs e)
@@ -1333,7 +1240,7 @@ namespace DiscordActivityMockV2
                 string content = await response.Content.ReadAsStringAsync(_windowLifetime.Token);
                 if (content.Length > 2 * 1024 * 1024)
                     throw new InvalidDataException("The activity catalog is larger than expected.");
-                return (ParseActivities(content), false);
+                return (ActivityRules.ParseActivities(content), false);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidDataException)
             {
@@ -1345,47 +1252,7 @@ namespace DiscordActivityMockV2
                 throw new IOException("Could not download the catalog and no bundled catalog is available.", onlineError);
 
             using var reader = new StreamReader(bundledStream);
-            return (ParseActivities(await reader.ReadToEndAsync(_windowLifetime.Token)), true);
-        }
-
-        private static ActivityItem[] ParseActivities(string json)
-        {
-            var activities = JsonSerializer.Deserialize(json, AppJsonContext.Default.ActivityItemArray)
-                             ?? throw new JsonException("The activity catalog is empty.");
-
-            var validActivities = new List<ActivityItem>();
-            foreach (var activity in activities)
-            {
-                if (activity == null || string.IsNullOrWhiteSpace(activity.name) ||
-                    string.IsNullOrWhiteSpace(activity.folder) || string.IsNullOrWhiteSpace(activity.exe))
-                    continue;
-
-                try
-                {
-                    activity.name = activity.name.Trim();
-                    activity.folder = activity.folder.Trim();
-                    activity.exe = activity.exe.Trim();
-                    ResolveChildPath(Path.GetTempPath(), activity.folder);
-                    NormalizeExecutableName(activity.exe);
-                    if (activity.steamManifest != null)
-                        SteamManifestSupport.Validate(activity.steamManifest, activity.folder);
-                    validActivities.Add(activity);
-                }
-                catch (ArgumentException)
-                {
-                    // Ignore malformed entries from the remote catalog.
-                }
-            }
-
-            var uniqueActivities = validActivities
-                .GroupBy(activity => activity.name, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .OrderBy(activity => activity.name, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            if (uniqueActivities.Length == 0)
-                throw new JsonException("The activity catalog did not contain any valid entries.");
-            return uniqueActivities;
+            return (ActivityRules.ParseActivities(await reader.ReadToEndAsync(_windowLifetime.Token)), true);
         }
 
         private void ApplyActivities(ActivityItem[] activities)
@@ -1477,12 +1344,12 @@ namespace DiscordActivityMockV2
                 string newFolderPath;
                 try
                 {
-                    targetExeName = NormalizeExecutableName(FileExeTxt.Text);
-                    newFolderPath = ResolveChildPath(_workingRootPath, targetFolderName);
+                    targetExeName = ActivityRules.NormalizeExecutableName(FileExeTxt.Text);
+                    newFolderPath = ActivityRules.ResolveChildPath(_workingRootPath, targetFolderName);
                     if (steamManifest != null)
                     {
                         SteamManifestSupport.Validate(steamManifest, targetFolderName);
-                        string catalogExeName = NormalizeExecutableName(selectedActivity!.exe);
+                        string catalogExeName = ActivityRules.NormalizeExecutableName(selectedActivity!.exe);
                         if (!string.Equals(targetExeName, catalogExeName, StringComparison.OrdinalIgnoreCase))
                             throw new ArgumentException("The executable name for a Steam manifest activity must match its catalog entry.");
                     }
@@ -1503,7 +1370,7 @@ namespace DiscordActivityMockV2
                     return;
                 }
 
-                if (!IsPathWithin(_workingRootPath, _currentFolderPath))
+                if (!PathGuard.IsWithin(_workingRootPath, _currentFolderPath))
                     throw new InvalidOperationException("The current working folder is outside the private session directory.");
 
                 string activityExePath;
@@ -1540,7 +1407,7 @@ namespace DiscordActivityMockV2
                         if (Directory.Exists(newFolderPath) || File.Exists(newFolderPath))
                             throw new IOException("The requested activity folder already exists in the private session directory.");
 
-                        if (newFolderPath.StartsWith(currentFolderPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                        if (PathGuard.IsWithin(currentFolderPath, newFolderPath))
                             throw new ArgumentException("The activity folder cannot be inside the temporary WordPad folder.");
 
                         Directory.CreateDirectory(Path.GetDirectoryName(newFolderPath)!);

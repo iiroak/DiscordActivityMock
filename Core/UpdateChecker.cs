@@ -161,8 +161,7 @@ namespace DiscordActivityMockV2
                         "Programs", "DiscordActivityMock");
 
                 string executable = Path.GetFullPath(processPath);
-                string installRoot = Path.GetFullPath(installLocation).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                return executable.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase);
+                return PathGuard.IsWithin(installLocation, executable);
             }
             catch (Exception ex)
             {
@@ -264,11 +263,10 @@ namespace DiscordActivityMockV2
                 if (archive.Entries.Count > 2000 || archive.Entries.Sum(entry => entry.Length) > MaxUpdateArchiveBytes)
                     throw new InvalidDataException("The portable update ZIP contains an unexpected amount of data.");
 
-                string extractionRoot = Path.GetFullPath(destinationDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
                     string destination = Path.GetFullPath(Path.Combine(destinationDirectory, entry.FullName));
-                    if (!destination.StartsWith(extractionRoot, StringComparison.OrdinalIgnoreCase))
+                    if (!PathGuard.IsWithin(destinationDirectory, destination))
                         throw new InvalidDataException("The portable update ZIP contains an invalid path.");
                 }
             }
