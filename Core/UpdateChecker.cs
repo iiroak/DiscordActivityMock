@@ -1,12 +1,12 @@
 using Microsoft.Win32;
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -33,6 +33,10 @@ namespace DiscordActivityMockV2
 
         [JsonPropertyName("browser_download_url")]
         public string DownloadUrl { get; set; } = "";
+
+        /// <summary>SHA-256 that GitHub computes at upload time, formatted as "sha256:&lt;64 hex&gt;".</summary>
+        [JsonPropertyName("digest")]
+        public string? Digest { get; set; }
     }
 
     public sealed record UpdateInfo(
@@ -43,6 +47,12 @@ namespace DiscordActivityMockV2
         GitHubAsset? Setup);
 
     public sealed record UpdateCheckResult(bool Succeeded, UpdateInfo? Update);
+
+    /// <summary>
+    /// <paramref name="FilePath"/> is set only when the download finished and its SHA-256 matched.
+    /// <paramref name="IntegrityFailed"/> is true when the file could not be verified against GitHub's digest.
+    /// </summary>
+    public sealed record UpdateDownloadResult(string? FilePath, bool IntegrityFailed);
 
     public enum UpdatePackageKind
     {
@@ -58,7 +68,13 @@ namespace DiscordActivityMockV2
 
     public static class UpdateChecker
     {
+        public const string ReleasesPageUrl = "https://github.com/iiroak/DiscordActivityMock/releases/latest";
+        internal const string TemporaryDownloadPrefix = "DiscordActivityMock_Update_";
+
         private const string GitHubApiUrl = "https://api.github.com/repos/iiroak/DiscordActivityMock/releases/latest";
+        private const string ReleasesPath = "/iiroak/DiscordActivityMock/releases";
+        private const string AssetDownloadPath = ReleasesPath + "/download";
+        private const string Sha256DigestPrefix = "sha256:";
         private const long MaxUpdateDownloadBytes = 700L * 1024 * 1024;
         private const long MaxUpdateArchiveBytes = 1024L * 1024 * 1024;
         private const string InnoUninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{C2A64B4B-69FC-4F28-B048-5C4E661D4F32}_is1";
@@ -68,8 +84,12 @@ namespace DiscordActivityMockV2
         static UpdateChecker()
         {
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "DiscordActivityMock");
+            _httpClient.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
+            _httpClient.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
             _downloadClient.DefaultRequestHeaders.Add("User-Agent", "DiscordActivityMock");
         }
+
+        private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         public static string GetCurrentVersion() => AppVersion.Current;
 
@@ -83,20 +103,7 @@ namespace DiscordActivityMockV2
 
                 response.EnsureSuccessStatusCode();
                 string json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var release = JsonSerializer.Deserialize(json, UpdateJsonContext.Default.GitHubRelease);
-                if (release == null || string.IsNullOrWhiteSpace(release.TagName))
-                    return new UpdateCheckResult(false, null);
-
-                string latestVersion = AppVersion.Normalize(release.TagName);
-                if (!AppVersion.IsNewer(latestVersion, AppVersion.Current))
-                    return new UpdateCheckResult(true, null);
-
-                return new UpdateCheckResult(true, new UpdateInfo(
-                    latestVersion,
-                    release.HtmlUrl,
-                    FindAsset(release, "-win-x86-Portable.exe"),
-                    FindAsset(release, "-win-x86-Portable.zip"),
-                    FindAsset(release, "-win-x86-Setup.exe")));
+                return new UpdateCheckResult(true, ParseRelease(json, AppVersion.Current));
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -113,15 +120,52 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private static GitHubAsset? FindAsset(GitHubRelease release, string suffix)
+        /// <summary>Returns the update described by the release JSON, or null when it is not newer.</summary>
+        internal static UpdateInfo? ParseRelease(string json, string currentVersion)
         {
-            foreach (GitHubAsset asset in release.Assets)
+            GitHubRelease? release = JsonSerializer.Deserialize(json, UpdateJsonContext.Default.GitHubRelease);
+            if (release == null || string.IsNullOrWhiteSpace(release.TagName))
+                throw new JsonException("The release response does not contain a tag.");
+
+            string latestVersion = AppVersion.Normalize(release.TagName);
+            if (!AppVersion.IsNewer(latestVersion, currentVersion))
+                return null;
+
+            return new UpdateInfo(
+                latestVersion,
+                IsTrustedReleasePageUrl(release.HtmlUrl) ? release.HtmlUrl : ReleasesPageUrl,
+                FindAsset(release, "-win-x86-Portable.exe"),
+                FindAsset(release, "-win-x86-Portable.zip"),
+                FindAsset(release, "-win-x86-Setup.exe"));
+        }
+
+        /// <summary>Only assets from this repository with a valid SHA-256 digest can be installed in-app.</summary>
+        internal static GitHubAsset? FindAsset(GitHubRelease release, string suffix)
+        {
+            foreach (GitHubAsset? asset in release.Assets ?? Array.Empty<GitHubAsset>())
             {
-                if (asset.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && IsTrustedGitHubUrl(asset.DownloadUrl))
+                if (asset?.Name != null &&
+                    asset.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                    IsTrustedAssetUrl(asset.DownloadUrl) &&
+                    TryParseSha256Digest(asset.Digest, out _))
                     return asset;
             }
 
             return null;
+        }
+
+        internal static bool TryParseSha256Digest(string? digest, out byte[] hash)
+        {
+            hash = Array.Empty<byte>();
+            if (string.IsNullOrEmpty(digest) || !digest.StartsWith(Sha256DigestPrefix, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string hex = digest[Sha256DigestPrefix.Length..];
+            if (hex.Length != 64 || !hex.All(char.IsAsciiHexDigit))
+                return false;
+
+            hash = Convert.FromHexString(hex);
+            return true;
         }
 
         public static UpdatePackageKind GetCurrentPackageKind()
@@ -156,12 +200,9 @@ namespace DiscordActivityMockV2
                 using RegistryKey? key = Registry.CurrentUser.OpenSubKey(InnoUninstallKey);
                 string? installLocation = key?.GetValue("InstallLocation") as string;
                 if (string.IsNullOrWhiteSpace(installLocation))
-                    installLocation = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "Programs", "DiscordActivityMock");
+                    installLocation = Path.Combine(LocalAppData, "Programs", "DiscordActivityMock");
 
-                string executable = Path.GetFullPath(processPath);
-                return PathGuard.IsWithin(installLocation, executable);
+                return PathGuard.IsWithin(installLocation, Path.GetFullPath(processPath));
             }
             catch (Exception ex)
             {
@@ -170,88 +211,152 @@ namespace DiscordActivityMockV2
             }
         }
 
-        public static async Task<string?> DownloadUpdateAsync(
-            string downloadUrl,
-            IProgress<double>? progress = null,
+        public static async Task<UpdateDownloadResult> DownloadUpdateAsync(
+            GitHubAsset asset,
+            IProgress<int>? progress = null,
             CancellationToken cancellationToken = default)
         {
             string? temporaryDirectory = null;
             try
             {
-                if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? uri) || !IsTrustedGitHubUrl(uri.AbsoluteUri))
-                    return null;
+                if (!TryParseSha256Digest(asset.Digest, out byte[] expectedHash) ||
+                    !IsTrustedAssetUrl(asset.DownloadUrl) ||
+                    !Uri.TryCreate(asset.DownloadUrl, UriKind.Absolute, out Uri? uri))
+                {
+                    AppLog.Warning("Download update", $"Refused to download '{asset.Name}' without a trusted URL and SHA-256 digest.");
+                    return new UpdateDownloadResult(null, IntegrityFailed: true);
+                }
 
                 string fileName = Uri.UnescapeDataString(Path.GetFileName(uri.AbsolutePath));
                 if (string.IsNullOrWhiteSpace(fileName) ||
                     fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
                     !(fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
                       fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
-                    return null;
+                    return new UpdateDownloadResult(null, IntegrityFailed: false);
 
-                temporaryDirectory = Path.Combine(Path.GetTempPath(), $"DiscordActivityMock_Update_{Guid.NewGuid():N}");
+                temporaryDirectory = Path.Combine(Path.GetTempPath(), TemporaryDownloadPrefix + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(temporaryDirectory);
                 string temporaryPath = Path.Combine(temporaryDirectory, fileName);
 
-                using var response = await _downloadClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                response.EnsureSuccessStatusCode();
-                if (response.Content.Headers.ContentLength is long contentLength && contentLength > MaxUpdateDownloadBytes)
-                    throw new InvalidDataException("The update package exceeds the allowed download size.");
-
-                await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using var fileStream = new FileStream(
-                    temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-
-                var buffer = new byte[81920];
-                long totalRead = 0;
-                long totalBytes = response.Content.Headers.ContentLength ?? -1L;
-                int bytesRead;
-                while ((bytesRead = await contentStream.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+                byte[] actualHash;
+                using (var response = await _downloadClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
                 {
-                    totalRead += bytesRead;
-                    if (totalRead > MaxUpdateDownloadBytes)
+                    response.EnsureSuccessStatusCode();
+                    long? contentLength = response.Content.Headers.ContentLength;
+                    if (contentLength > MaxUpdateDownloadBytes)
                         throw new InvalidDataException("The update package exceeds the allowed download size.");
 
-                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
-                    if (totalBytes > 0)
-                        progress?.Report((double)totalRead / totalBytes * 100);
+                    await using Stream contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    await using var fileStream = new FileStream(
+                        temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+                    actualHash = await CopyAndHashAsync(
+                        contentStream, fileStream, MaxUpdateDownloadBytes, contentLength ?? -1, progress, cancellationToken);
                 }
 
-                await fileStream.FlushAsync(cancellationToken);
-                return temporaryPath;
+                if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
+                {
+                    AppLog.Warning("Download update",
+                        $"SHA-256 mismatch for '{fileName}': expected {Convert.ToHexString(expectedHash)}, got {Convert.ToHexString(actualHash)}.");
+                    DeleteTemporaryDirectory(temporaryDirectory);
+                    return new UpdateDownloadResult(null, IntegrityFailed: true);
+                }
+
+                return new UpdateDownloadResult(temporaryPath, IntegrityFailed: false);
             }
             catch (OperationCanceledException)
             {
                 DeleteTemporaryDirectory(temporaryDirectory);
-                return null;
+                return new UpdateDownloadResult(null, IntegrityFailed: false);
             }
             catch (Exception ex)
             {
                 AppLog.Error("Download update", ex);
                 DeleteTemporaryDirectory(temporaryDirectory);
-                return null;
+                return new UpdateDownloadResult(null, IntegrityFailed: false);
             }
+        }
+
+        /// <summary>
+        /// Copies <paramref name="source"/> to <paramref name="destination"/>, returns its SHA-256, and reports
+        /// whole percentages only when they change.
+        /// </summary>
+        internal static async Task<byte[]> CopyAndHashAsync(
+            Stream source,
+            Stream destination,
+            long maxBytes,
+            long totalBytes,
+            IProgress<int>? progress,
+            CancellationToken cancellationToken)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[81920];
+            long totalRead = 0;
+            int lastReportedPercent = -1;
+            int bytesRead;
+            while ((bytesRead = await source.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+            {
+                totalRead += bytesRead;
+                if (totalRead > maxBytes)
+                    throw new InvalidDataException("The update package exceeds the allowed download size.");
+
+                hash.AppendData(buffer, 0, bytesRead);
+                await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+
+                if (progress != null && totalBytes > 0)
+                {
+                    int percent = (int)Math.Min(100, totalRead * 100 / totalBytes);
+                    if (percent != lastReportedPercent)
+                    {
+                        lastReportedPercent = percent;
+                        progress.Report(percent);
+                    }
+                }
+            }
+
+            await destination.FlushAsync(cancellationToken);
+            return hash.GetHashAndReset();
         }
 
         public static string CreatePortableUpdateDirectory(string currentExecutablePath, string version)
         {
-            string safeVersion = SanitizeVersionForPath(version);
-            string updateFolder = $"{safeVersion}-{Guid.NewGuid():N}";
-            string currentDirectory = Path.GetDirectoryName(Path.GetFullPath(currentExecutablePath))!;
+            string updateFolder = PortableLayout.CreateUpdateFolderName(SanitizeVersionForPath(version));
+            PortableRoot root = PortableLayout.Resolve(currentExecutablePath, LocalAppData);
 
+            if (root.PreferredUpdatesDirectory != null)
+            {
+                try
+                {
+                    string preferredDirectory = Path.Combine(root.PreferredUpdatesDirectory, updateFolder);
+                    Directory.CreateDirectory(preferredDirectory);
+                    return preferredDirectory;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // The portable folder is read-only; fall back to the user's local app data.
+                }
+            }
+
+            string fallbackDirectory = Path.Combine(root.FallbackUpdatesDirectory, updateFolder);
+            Directory.CreateDirectory(fallbackDirectory);
+            return fallbackDirectory;
+        }
+
+        /// <summary>Deletes a folder created by <see cref="CreatePortableUpdateDirectory"/> after a failed update.</summary>
+        public static void DeletePortableUpdateDirectory(string directory)
+        {
             try
             {
-                string preferredDirectory = Path.Combine(currentDirectory, "updates", updateFolder);
-                Directory.CreateDirectory(preferredDirectory);
-                return preferredDirectory;
+                string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+                string? parentName = Path.GetFileName(Path.GetDirectoryName(fullPath));
+                if (Directory.Exists(fullPath) &&
+                    PortableLayout.TryParseUpdateFolderName(Path.GetFileName(fullPath), out _) &&
+                    (string.Equals(parentName, PortableLayout.UpdatesFolderName, StringComparison.OrdinalIgnoreCase) ||
+                     PortableLayout.IsDirectoryKey(parentName)))
+                    Directory.Delete(fullPath, recursive: true);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex)
             {
-                string currentDirectoryHash = GetDirectoryHash(currentDirectory);
-                string fallbackDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "DiscordActivityMock", "PortableUpdates", currentDirectoryHash, updateFolder);
-                Directory.CreateDirectory(fallbackDirectory);
-                return fallbackDirectory;
+                AppLog.Error("Clean failed portable update", ex);
             }
         }
 
@@ -278,6 +383,10 @@ namespace DiscordActivityMockV2
             return executablePath;
         }
 
+        /// <summary>
+        /// The marker holds only the target path, the format that versions 2.2.4 to 2.2.8 read, so an old
+        /// executable started from its original folder still opens the newest update.
+        /// </summary>
         public static void SavePortableUpdateRedirect(string currentExecutablePath, string targetExecutablePath)
         {
             string markerPath = GetPortableRedirectMarkerPath(currentExecutablePath);
@@ -301,6 +410,7 @@ namespace DiscordActivityMockV2
             }
         }
 
+        /// <summary>Starts the newer portable copy recorded for this folder. Returns true when the app should exit.</summary>
         public static bool TryRedirectPortableUpdate()
         {
             string? currentExecutablePath = Environment.ProcessPath;
@@ -314,22 +424,53 @@ namespace DiscordActivityMockV2
                     return false;
 
                 string targetExecutablePath = File.ReadAllText(markerPath).Trim();
-                if (!File.Exists(targetExecutablePath) ||
-                    string.Equals(Path.GetFullPath(currentExecutablePath), Path.GetFullPath(targetExecutablePath), StringComparison.OrdinalIgnoreCase))
-                    return false;
+                bool targetExists = Path.IsPathFullyQualified(targetExecutablePath) && File.Exists(targetExecutablePath);
+                string? targetVersion = targetExists ? ReadExecutableVersion(targetExecutablePath) : null;
 
-                Process.Start(new ProcessStartInfo
+                switch (PortableLayout.DecideRedirect(AppVersion.Current, currentExecutablePath, targetExecutablePath, targetVersion, targetExists))
                 {
-                    FileName = targetExecutablePath,
-                    WorkingDirectory = Path.GetDirectoryName(targetExecutablePath)!,
-                    UseShellExecute = true
-                });
-                return true;
+                    case RedirectDecision.Redirect:
+                        using (Process? process = Process.Start(new ProcessStartInfo
+                        {
+                            FileName = targetExecutablePath,
+                            WorkingDirectory = Path.GetDirectoryName(targetExecutablePath)!,
+                            UseShellExecute = true
+                        }))
+                        {
+                            return process != null;
+                        }
+
+                    case RedirectDecision.DeleteMarker:
+                        File.Delete(markerPath);
+                        return false;
+
+                    default:
+                        return false;
+                }
             }
             catch (Exception ex)
             {
                 AppLog.Error("Redirect to updated portable application", ex);
                 return false;
+            }
+        }
+
+        /// <summary>Reads the version stored in the executable's version resource.</summary>
+        internal static string? ReadExecutableVersion(string executablePath)
+        {
+            try
+            {
+                FileVersionInfo info = FileVersionInfo.GetVersionInfo(executablePath);
+                if (AppVersion.TryParse(info.ProductVersion, out _))
+                    return AppVersion.Normalize(info.ProductVersion);
+
+                if (info.FileMajorPart > 0 || info.FileMinorPart > 0 || info.FileBuildPart > 0)
+                    return $"{info.FileMajorPart}.{info.FileMinorPart}.{info.FileBuildPart}";
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+            {
+                return null;
             }
         }
 
@@ -343,15 +484,9 @@ namespace DiscordActivityMockV2
 
         private static string GetPortableRedirectMarkerPath(string processPath)
         {
-            string processDirectory = Path.GetDirectoryName(Path.GetFullPath(processPath))!;
-            string key = GetDirectoryHash(processDirectory);
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DiscordActivityMock", "PortableRedirects", key + ".txt");
+            string key = PortableLayout.Resolve(processPath, LocalAppData).Key;
+            return Path.Combine(LocalAppData, "DiscordActivityMock", "PortableRedirects", key + ".txt");
         }
-
-        private static string GetDirectoryHash(string directory) =>
-            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(directory).ToUpperInvariant())))[..16];
 
         private static void DeleteTemporaryDirectory(string? path)
         {
@@ -360,7 +495,7 @@ namespace DiscordActivityMockV2
 
             try
             {
-                if (Directory.Exists(path) && Path.GetFileName(path).StartsWith("DiscordActivityMock_Update_", StringComparison.OrdinalIgnoreCase))
+                if (Directory.Exists(path) && Path.GetFileName(path).StartsWith(TemporaryDownloadPrefix, StringComparison.OrdinalIgnoreCase))
                     Directory.Delete(path, recursive: true);
             }
             catch (Exception ex)
@@ -377,23 +512,30 @@ namespace DiscordActivityMockV2
             return safe;
         }
 
-        private static bool IsTrustedGitHubUrl(string url) =>
+        /// <summary>A release asset of this repository: https://github.com/iiroak/DiscordActivityMock/releases/download/...</summary>
+        internal static bool IsTrustedAssetUrl([NotNullWhen(true)] string? url) => IsTrustedGitHubUrl(url, AssetDownloadPath);
+
+        /// <summary>A release page of this repository: https://github.com/iiroak/DiscordActivityMock/releases/...</summary>
+        internal static bool IsTrustedReleasePageUrl([NotNullWhen(true)] string? url) => IsTrustedGitHubUrl(url, ReleasesPath);
+
+        private static bool IsTrustedGitHubUrl([NotNullWhen(true)] string? url, string pathPrefix) =>
             Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
             uri.Scheme == Uri.UriSchemeHttps &&
-            uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
+            uri.IsDefaultPort &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+            (uri.AbsolutePath.Equals(pathPrefix, StringComparison.OrdinalIgnoreCase) ||
+             uri.AbsolutePath.StartsWith(pathPrefix + "/", StringComparison.OrdinalIgnoreCase));
 
-        public static void OpenReleasePage(string url)
+        public static void OpenReleasePage(string? url)
         {
             try
             {
-                if (!IsTrustedGitHubUrl(url))
-                    return;
-
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = url,
+                    FileName = IsTrustedReleasePageUrl(url) ? url : ReleasesPageUrl,
                     UseShellExecute = true
-                });
+                })?.Dispose();
             }
             catch (Exception ex)
             {

@@ -165,6 +165,9 @@ namespace DiscordActivityMockV2
             try
             {
                 UpdateCheckResult check = await UpdateChecker.CheckForUpdateAsync(_windowLifetime.Token);
+                if (_isWindowClosed)
+                    return;
+
                 if (!check.Succeeded)
                 {
                     if (showResultWhenCurrent)
@@ -179,14 +182,15 @@ namespace DiscordActivityMockV2
                     return;
                 }
 
+                // Assets without a SHA-256 digest are not returned, so only "View on GitHub" is offered for them.
                 UpdatePackageKind packageKind = UpdateChecker.GetCurrentPackageKind();
-                string? downloadUrl = UpdateChecker.GetUpdateAsset(check.Update, packageKind)?.DownloadUrl;
+                GitHubAsset? asset = UpdateChecker.GetUpdateAsset(check.Update, packageKind);
                 var dialog = new ContentDialog
                 {
                     Title = Localization.Get("UpdateAvailable"),
                     Content = Localization.Get("UpdateMessage", check.Update.Version),
-                    PrimaryButtonText = downloadUrl == null ? Localization.Get("ViewOnGitHub") : Localization.Get("UpdateNow"),
-                    SecondaryButtonText = downloadUrl == null ? "" : Localization.Get("ViewOnGitHub"),
+                    PrimaryButtonText = asset == null ? Localization.Get("ViewOnGitHub") : Localization.Get("UpdateNow"),
+                    SecondaryButtonText = asset == null ? "" : Localization.Get("ViewOnGitHub"),
                     CloseButtonText = Localization.Get("Later"),
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = this.Content.XamlRoot,
@@ -196,10 +200,10 @@ namespace DiscordActivityMockV2
                 ContentDialogResult? result = await ShowContentDialogAsync(dialog);
                 if (result == ContentDialogResult.Primary)
                 {
-                    if (downloadUrl == null)
+                    if (asset == null)
                         UpdateChecker.OpenReleasePage(check.Update.ReleaseUrl);
                     else
-                        await DownloadAndApplyUpdateAsync(check.Update, packageKind, downloadUrl);
+                        await DownloadAndApplyUpdateAsync(check.Update, packageKind, asset);
                 }
                 else if (result == ContentDialogResult.Secondary)
                 {
@@ -214,7 +218,7 @@ namespace DiscordActivityMockV2
             }
         }
 
-        private async Task DownloadAndApplyUpdateAsync(UpdateInfo update, UpdatePackageKind packageKind, string downloadUrl)
+        private async Task DownloadAndApplyUpdateAsync(UpdateInfo update, UpdatePackageKind packageKind, GitHubAsset asset)
         {
             if (_isActivityRunning || _isStarting)
             {
@@ -244,11 +248,11 @@ namespace DiscordActivityMockV2
                 IsIndeterminate = true,
                 Margin = new Thickness(0, 12, 0, 0)
             };
-            var progress = new Progress<double>(value =>
+            var progress = new Progress<int>(percent =>
             {
                 progressBar.IsIndeterminate = false;
-                progressBar.Value = value;
-                progressText.Text = Localization.Get("UpdateDownloadProgress", Math.Round(value));
+                progressBar.Value = percent;
+                progressText.Text = Localization.Get("UpdateDownloadProgress", percent);
             });
             var progressDialog = new ContentDialog
             {
@@ -260,7 +264,7 @@ namespace DiscordActivityMockV2
             };
 
             Task<ContentDialogResult?> dialogTask = ShowContentDialogAsync(progressDialog);
-            Task<string?> downloadTask = UpdateChecker.DownloadUpdateAsync(downloadUrl, progress, cancellation.Token);
+            Task<UpdateDownloadResult> downloadTask = UpdateChecker.DownloadUpdateAsync(asset, progress, cancellation.Token);
             Task firstCompleted = await Task.WhenAny(dialogTask, downloadTask);
             bool cancelledByUser = firstCompleted == dialogTask;
             if (cancelledByUser)
@@ -269,16 +273,41 @@ namespace DiscordActivityMockV2
                 progressDialog.Hide();
 
             await dialogTask;
-            string? downloadedPath = await downloadTask;
+            UpdateDownloadResult download = await downloadTask;
             if (cancelledByUser || _isWindowClosed)
+            {
+                // The download can finish at the same moment the user cancels.
+                if (download.FilePath != null)
+                    UpdateChecker.DeleteDownloadedUpdate(download.FilePath);
                 return;
+            }
 
-            if (downloadedPath == null)
+            if (download.IntegrityFailed)
+            {
+                var integrityDialog = new ContentDialog
+                {
+                    Title = Localization.Get("Error"),
+                    Content = Localization.Get("UpdateIntegrityFailed"),
+                    PrimaryButtonText = Localization.Get("ViewOnGitHub"),
+                    CloseButtonText = Localization.Get("Cancel"),
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = this.Content.XamlRoot,
+                    RequestedTheme = _isDarkTheme ? ElementTheme.Dark : ElementTheme.Light
+                };
+                if (await ShowContentDialogAsync(integrityDialog) == ContentDialogResult.Primary)
+                    UpdateChecker.OpenReleasePage(update.ReleaseUrl);
+                return;
+            }
+
+            if (download.FilePath == null)
             {
                 await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateDownloadFailed"));
                 return;
             }
 
+            string downloadedPath = download.FilePath;
+            string? updateDirectory = null;
+            bool redirectSaved = false;
             try
             {
                 if (packageKind == UpdatePackageKind.Installed)
@@ -292,11 +321,12 @@ namespace DiscordActivityMockV2
                     if (installer == null)
                         throw new InvalidOperationException("Windows did not start the update installer.");
 
+                    // The installer runs from the download folder; startup cleanup removes it later.
                     Application.Current.Exit();
                     return;
                 }
 
-                string updateDirectory = UpdateChecker.CreatePortableUpdateDirectory(currentExecutable, update.Version);
+                updateDirectory = UpdateChecker.CreatePortableUpdateDirectory(currentExecutable, update.Version);
                 string updatedExecutable;
                 if (packageKind == UpdatePackageKind.PortableExe)
                 {
@@ -313,17 +343,15 @@ namespace DiscordActivityMockV2
                 }
 
                 UpdateChecker.SavePortableUpdateRedirect(currentExecutable, updatedExecutable);
-                Process? updatedProcess = Process.Start(new ProcessStartInfo
+                redirectSaved = true;
+                using Process? updatedProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = updatedExecutable,
                     WorkingDirectory = Path.GetDirectoryName(updatedExecutable)!,
                     UseShellExecute = true
                 });
                 if (updatedProcess == null)
-                {
-                    UpdateChecker.RemovePortableUpdateRedirect(currentExecutable);
                     throw new InvalidOperationException("Windows did not start the updated application.");
-                }
 
                 UpdateChecker.DeleteDownloadedUpdate(downloadedPath);
                 Application.Current.Exit();
@@ -331,6 +359,11 @@ namespace DiscordActivityMockV2
             catch (Exception ex)
             {
                 AppLog.Error("Apply update", ex);
+                if (redirectSaved)
+                    UpdateChecker.RemovePortableUpdateRedirect(currentExecutable);
+                if (updateDirectory != null)
+                    UpdateChecker.DeletePortableUpdateDirectory(updateDirectory);
+                UpdateChecker.DeleteDownloadedUpdate(downloadedPath);
                 await ShowDialogAsync(Localization.Get("Error"), Localization.Get("UpdateApplyFailed"));
             }
         }

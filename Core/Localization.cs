@@ -383,6 +383,12 @@ namespace DiscordActivityMockV2
                 [Language.Spanish] = "No se pudo aplicar la actualización. Abre la release en GitHub para instalarla manualmente.",
                 [Language.Portuguese] = "Não foi possível aplicar a atualização. Abra a release no GitHub para instalá-la manualmente."
             },
+            ["UpdateIntegrityFailed"] = new()
+            {
+                [Language.English] = "The update could not be verified against the SHA-256 checksum published on GitHub, so it was not installed. Download it from the release page instead.",
+                [Language.Spanish] = "No se pudo verificar la actualización con el checksum SHA-256 publicado en GitHub, así que no se instaló. Descárgala desde la página de la release.",
+                [Language.Portuguese] = "Não foi possível verificar a atualização com o checksum SHA-256 publicado no GitHub, por isso ela não foi instalada. Baixe-a pela página da release."
+            },
             ["UpdateCheckFailed"] = new()
             {
                 [Language.English] = "Could not check for updates. Check your internet connection and try again.",
